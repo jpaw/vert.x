@@ -22,6 +22,8 @@ import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 
+import de.jpaw.bonaparte.core.BonaPortable;     // 3 methods added
+
 /**
  * A distributed lightweight event bus which can encompass multiple vert.x instances.
  * The event bus implements publish / subscribe, point to point messaging and request-response messaging.<p>
@@ -74,6 +76,21 @@ public interface EventBus {
    * @param replyHandler Reply handler will be called when any reply from the recipient is received
    */
   EventBus send(String address, Object message, Handler<Message> replyHandler);
+
+  /**
+   * Send a JSON object as a message
+   * @param address The address to send it to
+   * @param message The message
+   * @param replyHandler Reply handler will be called when any reply from the recipient is received
+   */
+  <T> EventBus send(String address, BonaPortable message, Handler<Message<T>> replyHandler);
+
+  /**
+   * Send a JSON object as a message
+   * @param address The address to send it to
+   * @param message The message
+   */
+  EventBus send(String address, BonaPortable message);
 
   /**
    * Send a JSON object as a message
@@ -276,6 +293,13 @@ public interface EventBus {
    * @param message The message
    */
   EventBus publish(String address, Object message);
+
+  /**
+   * Publish a BonaPortable object as a message
+   * @param address The address to publish it to
+   * @param message The message
+   */
+  EventBus publish(String address, BonaPortable message);
 
   /**
    * Publish a JSON object as a message

@@ -18,7 +18,7 @@ package org.vertx.java.core.eventbus.impl;
 
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.UserMessageType;
-
+import de.jpaw.bonaparte.vertx.BonaPortableMessage;     // 1 case
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
@@ -37,6 +37,8 @@ public class MessageFactory {
   static final byte TYPE_SHORT = 10;
   static final byte TYPE_STRING = 11;
   static final byte TYPE_JSON = 12;
+
+  static public final byte TYPE_BONAPORTABLE_ASCII = 80;
 
   static public final byte USER_MESSAGE_TYPE_FIRST = 40;
   static public final byte USER_MESSAGE_TYPE_NUM = 20;
@@ -114,6 +116,8 @@ public class MessageFactory {
         return new StringMessage(buff);
       case TYPE_JSON:
         return new JsonObjectMessage(buff);
+      case TYPE_BONAPORTABLE_ASCII:
+          return new BonaPortableMessage(buff);
       default:
         throw new IllegalStateException("Invalid type " + type);
     }

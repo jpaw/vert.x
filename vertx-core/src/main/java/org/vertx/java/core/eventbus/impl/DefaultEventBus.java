@@ -38,6 +38,9 @@ import org.vertx.java.core.net.NetSocket;
 import org.vertx.java.core.net.impl.ServerID;
 import org.vertx.java.core.parsetools.RecordParser;
 
+import de.jpaw.bonaparte.core.BonaPortable;             // 3 methods + 1 case
+import de.jpaw.bonaparte.vertx.BonaPortableMessage;
+
 import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
@@ -115,6 +118,16 @@ public class DefaultEventBus implements EventBus {
     sendOrPub(new JsonObjectMessage(true, address, message), null);
     return this;
   }
+
+  public <T> EventBus send(String address, BonaPortable message, final Handler<Message<T>> replyHandler) {
+      sendOrPub(new BonaPortableMessage(true, address, message), replyHandler);
+      return this;
+    }
+
+    public EventBus send(String address, BonaPortable message) {
+      sendOrPub(new BonaPortableMessage(true, address, message), null);
+      return this;
+    }
 
   public <T> EventBus send(String address, JsonArray message, final Handler<Message<T>> replyHandler) {
     sendOrPub(new JsonArrayMessage(true, address, message), replyHandler);
@@ -246,6 +259,11 @@ public class DefaultEventBus implements EventBus {
     return this;
   }
 
+  public EventBus publish(String address, BonaPortable message) {
+      sendOrPub(new BonaPortableMessage(false, address, message), null);
+      return this;
+  }
+
   public EventBus publish(String address, Buffer message) {
     sendOrPub(new BufferMessage(false, address, message), null);
     return this;
@@ -369,14 +387,16 @@ public class DefaultEventBus implements EventBus {
     sendOrPub(dest, message, replyHandler);
   }
 
-  static BaseMessage createMessage(boolean send, String address, Object message) {
-    BaseMessage bm;
+  static <Z> BaseMessage<Z> createMessage(boolean send, String address, Z message) {
+    BaseMessage<?> bm;
     if (message instanceof String) {
       bm = new StringMessage(send, address, (String)message);
     } else if (message instanceof Buffer) {
       bm = new BufferMessage(send, address, (Buffer)message);
     } else if (message instanceof JsonObject) {
       bm = new JsonObjectMessage(send, address, (JsonObject)message);
+    } else if (message instanceof BonaPortable) {
+        bm = new BonaPortableMessage(send, address, (BonaPortable)message);
     } else if (message instanceof JsonArray) {
       bm = new JsonArrayMessage(send, address, (JsonArray)message);
     } else if (message instanceof byte[]) {
@@ -402,7 +422,7 @@ public class DefaultEventBus implements EventBus {
     } else {
       throw new IllegalArgumentException("Cannot send object of class " + message.getClass() + " on the event bus: " + message);
     }
-    return bm;
+    return (BaseMessage<Z>)bm;
   }
 
   private NetServer setServer(int port, final String hostName, final AsyncResultHandler<Void> listenHandler) {

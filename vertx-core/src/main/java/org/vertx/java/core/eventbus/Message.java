@@ -21,6 +21,8 @@ import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 
+import de.jpaw.bonaparte.core.BonaPortable;     // 2 methods added
+
 /**
  * Represents a message on the event bus.<p>
  *
@@ -28,12 +30,12 @@ import org.vertx.java.core.json.JsonObject;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public interface Message<T> {
+public interface Message<U> {
 
   /**
    * The body of the message
    */
-  T body();
+  U body();
 
   /**
    * The reply address (if any)
@@ -65,6 +67,13 @@ public interface Message<T> {
    * this method does nothing.
    */
   void reply(JsonArray message);
+
+  /**
+   * Reply to this message. If the message was sent specifying a reply handler, that handler will be
+   * called when it has received a reply. If the message wasn't sent specifying a receipt handler
+   * this method does nothing.
+   */
+  void reply(BonaPortable message);
 
   /**
    * Reply to this message. If the message was sent specifying a reply handler, that handler will be
@@ -148,6 +157,12 @@ public interface Message<T> {
    */
   <T> void reply(Object message, Handler<Message<T>> replyHandler);
 
+  /**
+   * The same as {@code reply(JsonObject message)} but you can specify handler for the reply - i.e.
+   * to receive the reply to the reply.
+   */
+  
+  <T> void reply(BonaPortable message, Handler<Message<T>> replyHandler);
   /**
    * The same as {@code reply(JsonObject message)} but you can specify handler for the reply - i.e.
    * to receive the reply to the reply.

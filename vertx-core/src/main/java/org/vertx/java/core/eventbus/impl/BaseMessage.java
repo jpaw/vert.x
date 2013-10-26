@@ -17,6 +17,7 @@
 package org.vertx.java.core.eventbus.impl;
 
 import io.netty.util.CharsetUtil;
+
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
@@ -24,6 +25,9 @@ import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.net.NetSocket;
 import org.vertx.java.core.net.impl.ServerID;
+
+import de.jpaw.bonaparte.core.BonaPortable;         // 2 methods added
+import de.jpaw.bonaparte.vertx.BonaPortableMessage;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -65,6 +69,11 @@ public abstract class BaseMessage<U> implements Message<U> {
 
   @Override
   public void reply(JsonObject message) {
+    reply(message, null);
+  }
+
+  @Override
+  public void reply(BonaPortable message) {
     reply(message, null);
   }
 
@@ -136,6 +145,11 @@ public abstract class BaseMessage<U> implements Message<U> {
   @Override
   public <T> void reply(JsonObject message, Handler<Message<T>> replyHandler) {
     sendReply(new JsonObjectMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void reply(BonaPortable message, Handler<Message<T>> replyHandler) {
+    sendReply(new BonaPortableMessage(true, replyAddress, message), replyHandler);
   }
 
   @Override
@@ -260,7 +274,7 @@ public abstract class BaseMessage<U> implements Message<U> {
 
   protected abstract int getBodyLength();
 
-  private <T> void sendReply(BaseMessage msg, Handler<Message<T>> replyHandler) {
+  private <T> void sendReply(BaseMessage<?> msg, Handler<Message<T>> replyHandler) {
     if (bus != null && replyAddress != null) {
       bus.sendReply(sender, msg, replyHandler);
     }
