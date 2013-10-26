@@ -16,15 +16,12 @@
 
 package de.jpaw.bonaparte.vertx;
 
-import io.netty.util.CharsetUtil;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.eventbus.impl.BaseMessage;
-import org.vertx.java.core.eventbus.impl.JsonObjectMessage;
 import org.vertx.java.core.eventbus.impl.MessageFactory;
-import org.vertx.java.core.json.JsonObject;
-
 import de.jpaw.bonaparte.core.BonaPortable;
 import de.jpaw.bonaparte.core.ByteArrayComposer;
 import de.jpaw.bonaparte.core.ByteArrayParser;
@@ -35,7 +32,16 @@ import de.jpaw.bonaparte.core.ObjectValidationException;
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public class BonaPortableMessage extends BaseMessage<BonaPortable> {
-
+    public static boolean doUsageStatistics = false;                            // avoid performance impact unless desired
+    private static AtomicInteger cntSerializations = new AtomicInteger();       // just for usage statistics
+    private static AtomicInteger cntDeserializations = new AtomicInteger();     // just for usage statistics
+    public static int getSerializations() {
+        return cntSerializations.get();
+    }
+    public static int getDeserializations() {
+        return cntDeserializations.get();
+    }
+    
     private byte[] encoded = null;
 
     public BonaPortableMessage(boolean send, String address, BonaPortable body) {
@@ -48,6 +54,8 @@ public class BonaPortableMessage extends BaseMessage<BonaPortable> {
 
     private void ensureEncodeFormAvailable() {
         if (encoded == null) {
+            if (doUsageStatistics)
+                cntSerializations.incrementAndGet();
             ByteArrayComposer bac = new ByteArrayComposer();
             bac.addField(body);
             encoded = bac.getBytes();
@@ -63,8 +71,9 @@ public class BonaPortableMessage extends BaseMessage<BonaPortable> {
             pos += 4;
             byte[] bytes = readBuff.getBytes(pos, pos + strLength);
             ByteArrayParser bap = new ByteArrayParser(bytes, 0, -1);
-            String str = new String(bytes, CharsetUtil.UTF_8);
             try {
+                if (doUsageStatistics)
+                    cntDeserializations.incrementAndGet();
                 body = bap.readObject("vertxMessage", BonaPortable.class, false, true);
             } catch (MessageParserException e) {
                 // TODO Auto-generated catch block
