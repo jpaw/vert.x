@@ -830,6 +830,9 @@ public class DefaultEventBus implements EventBus {
         if (size == 0) {
           return null;
         }
+        // optimization: if there is exactly one handler registered, avoid increment and set on the Atomic
+        if (size == 1)
+            return list.get(0);
         int p = pos.getAndIncrement();
         if (p >= size - 1) {
           pos.set(0);
