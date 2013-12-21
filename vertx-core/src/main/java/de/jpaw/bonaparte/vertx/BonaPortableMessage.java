@@ -22,11 +22,13 @@ import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.eventbus.impl.BaseMessage;
 import org.vertx.java.core.eventbus.impl.MessageFactory;
+
 import de.jpaw.bonaparte.core.BonaPortable;
 import de.jpaw.bonaparte.core.ByteArrayComposer;
 import de.jpaw.bonaparte.core.ByteArrayParser;
 import de.jpaw.bonaparte.core.MessageParserException;
 import de.jpaw.bonaparte.core.ObjectValidationException;
+import de.jpaw.bonaparte.core.StaticMeta;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -57,7 +59,7 @@ public class BonaPortableMessage extends BaseMessage<BonaPortable> {
             if (doUsageStatistics)
                 cntSerializations.incrementAndGet();
             ByteArrayComposer bac = new ByteArrayComposer();
-            bac.addField(body);
+            bac.addField(StaticMeta.OUTER_BONAPORTABLE, body);
             encoded = bac.getBytes();
         }
     }
