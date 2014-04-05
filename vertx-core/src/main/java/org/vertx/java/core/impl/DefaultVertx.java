@@ -1,29 +1,32 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.impl;
 
 import io.netty.channel.EventLoop;
 import io.netty.channel.EventLoopGroup;
-import org.vertx.java.core.AsyncResult;
-import org.vertx.java.core.Context;
-import org.vertx.java.core.Handler;
+import io.netty.util.ResourceLeakDetector;
+import org.vertx.java.core.*;
+import org.vertx.java.core.datagram.DatagramSocket;
+import org.vertx.java.core.datagram.InternetProtocolFamily;
+import org.vertx.java.core.datagram.impl.DefaultDatagramSocket;
+import org.vertx.java.core.dns.DnsClient;
+import org.vertx.java.core.dns.impl.DefaultDnsClient;
 import org.vertx.java.core.eventbus.EventBus;
 import org.vertx.java.core.eventbus.impl.DefaultEventBus;
-import org.vertx.java.core.eventbus.impl.hazelcast.HazelcastClusterManager;
 import org.vertx.java.core.file.FileSystem;
 import org.vertx.java.core.file.impl.DefaultFileSystem;
 import org.vertx.java.core.file.impl.WindowsFileSystem;
@@ -41,10 +44,17 @@ import org.vertx.java.core.net.impl.ServerID;
 import org.vertx.java.core.shareddata.SharedData;
 import org.vertx.java.core.sockjs.SockJSServer;
 import org.vertx.java.core.sockjs.impl.DefaultSockJSServer;
+import org.vertx.java.core.spi.Action;
+import org.vertx.java.core.spi.cluster.ClusterManager;
+import org.vertx.java.core.spi.cluster.ClusterManagerFactory;
 
+import java.net.InetSocketAddress;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.*;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -56,7 +66,9 @@ public class DefaultVertx implements VertxInternal {
 
   static {
     // Netty resource leak detection has a performance overhead and we do not need it in Vert.x
-    System.setProperty("io.netty.noResourceLeakDetection", "true");
+    ResourceLeakDetector.setLevel(ResourceLeakDetector.Level.DISABLED);
+    // Use the JDK deflater/inflater by default
+    System.setProperty("io.netty.noJdkZlibDecoder", "false");
   }
 
   private final FileSystem fileSystem = getFileSystem();
@@ -69,21 +81,55 @@ public class DefaultVertx implements VertxInternal {
 
   private Map<ServerID, DefaultHttpServer> sharedHttpServers = new HashMap<>();
   private Map<ServerID, DefaultNetServer> sharedNetServers = new HashMap<>();
-  private final ThreadLocal<DefaultContext> contextTL = new ThreadLocal<>();
 
   private final ConcurrentMap<Long, InternalTimerHandler> timeouts = new ConcurrentHashMap<>();
   private final AtomicLong timeoutCounter = new AtomicLong(0);
+  private final ClusterManager clusterManager;
 
   public DefaultVertx() {
     this.eventBus = new DefaultEventBus(this);
+    this.clusterManager = null;
   }
 
   public DefaultVertx(String hostname) {
-    this(0, hostname);
+    this(0, hostname, null);
   }
 
-  public DefaultVertx(int port, String hostname) {
-    this.eventBus = new DefaultEventBus(this, port, hostname, new HazelcastClusterManager(this));
+  public DefaultVertx(int port, String hostname, final Handler<AsyncResult<Vertx>> resultHandler) {
+    ClusterManagerFactory factory;
+    String clusterManagerFactoryClassName = System.getProperty("vertx.clusterManagerFactory");
+    if (clusterManagerFactoryClassName != null) {
+      // We allow specify a sys prop for the cluster manager factory which overrides ServiceLoader
+      try {
+        Class<?> clazz = Class.forName(clusterManagerFactoryClassName);
+        factory = (ClusterManagerFactory)clazz.newInstance();
+      } catch (Exception e) {
+        throw new IllegalStateException("Failed to instantiate " + clusterManagerFactoryClassName, e);
+      }
+    } else {
+      ServiceLoader<ClusterManagerFactory> factories = ServiceLoader.load(ClusterManagerFactory.class);
+      if (!factories.iterator().hasNext()) {
+        throw new IllegalStateException("No ClusterManagerFactory instances found on classpath");
+      }
+      factory = factories.iterator().next();
+    }
+    this.clusterManager = factory.createClusterManager(this);
+    this.clusterManager.join();
+    final Vertx inst = this;
+    this.eventBus = new DefaultEventBus(this, port, hostname, clusterManager, new AsyncResultHandler<Void>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        if (resultHandler != null) {
+          if (res.succeeded()) {
+            resultHandler.handle(new DefaultFutureResult<>(inst));
+          } else {
+            resultHandler.handle(new DefaultFutureResult<Vertx>(res.cause()));
+          }
+        } else if (res.failed()) {
+          log.error("Failed to start event bus", res.cause());
+        }
+      }
+    });
   }
 
   /**
@@ -91,6 +137,11 @@ public class DefaultVertx implements VertxInternal {
    */
   protected FileSystem getFileSystem() {
   	return Windows.isWindows() ? new WindowsFileSystem(this) : new DefaultFileSystem(this);
+  }
+
+  @Override
+  public DatagramSocket createDatagramSocket(InternetProtocolFamily family) {
+    return new DefaultDatagramSocket(this, family);
   }
 
   public NetServer createNetServer() {
@@ -219,6 +270,11 @@ public class DefaultVertx implements VertxInternal {
     return new EventLoopContext(this, orderedFact.getExecutor());
   }
 
+  @Override
+  public DnsClient createDnsClient(InetSocketAddress... dnsServers) {
+    return new DefaultDnsClient(this, dnsServers);
+  }
+
   private long scheduleTimeout(final DefaultContext context, final Handler<Long> handler, long delay, boolean periodic) {
     if (delay < 1) {
       throw new IllegalArgumentException("Cannot schedule a timer with delay < 1 ms");
@@ -261,30 +317,41 @@ public class DefaultVertx implements VertxInternal {
   }
 
   public void setContext(DefaultContext context) {
-    contextTL.set(context);
+    Thread current = Thread.currentThread();
+    if (current instanceof VertxThread) {
+      ((VertxThread)current).setContext(context);
+    }
     if (context != null) {
       context.setTCCL();
+    } else {
+      Thread.currentThread().setContextClassLoader(null);
     }
   }
 
   public DefaultContext getContext() {
-    return contextTL.get();
+    Thread current = Thread.currentThread();
+    if (current instanceof VertxThread) {
+      return ((VertxThread)current).getContext();
+    }
+    return null;
   }
 
   @Override
   public void stop() {
     if (sharedHttpServers != null) {
-      for (HttpServer server : sharedHttpServers.values()) {
+      // Copy set to prevent ConcurrentModificationException
+      for (HttpServer server : new HashSet<>(sharedHttpServers.values())) {
         server.close();
       }
-      sharedHttpServers = null;
+      sharedHttpServers.clear();
     }
 
     if (sharedNetServers != null) {
-      for (NetServer server : sharedNetServers.values()) {
+      // Copy set to prevent ConcurrentModificationException
+      for (NetServer server : new HashSet<>(sharedNetServers.values())) {
         server.close();
       }
-      sharedNetServers = null;
+      sharedNetServers.clear();
     }
 
     if (backgroundPool != null) {
@@ -302,10 +369,41 @@ public class DefaultVertx implements VertxInternal {
 
     if (eventLoopGroup != null) {
       eventLoopGroup.shutdownGracefully();
-      eventLoopGroup = null;
     }
 
+    eventBus.close(null);
+
     setContext(null);
+  }
+
+  @Override
+  public <T> void executeBlocking(final Action<T> action, final Handler<AsyncResult<T>> resultHandler) {
+    final DefaultContext context = getOrCreateContext();
+
+    Runnable runner = new Runnable() {
+      public void run() {
+        final DefaultFutureResult<T> res = new DefaultFutureResult<>();
+        try {
+          T result = action.perform();
+          res.setResult(result);
+        } catch (Exception e) {
+          res.setFailure(e);
+        }
+        if (resultHandler != null) {
+          context.execute(new Runnable() {
+              public void run() {
+                res.setHandler(resultHandler);
+              }
+            });
+        }
+      }
+    };
+
+    context.executeOnOrderedWorkerExec(runner);
+  }
+
+  public ClusterManager clusterManager() {
+    return clusterManager;
   }
 
   private class InternalTimerHandler implements Runnable, Closeable {

@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
@@ -55,7 +55,7 @@ class ClientConnection extends ConnectionBase {
   private final String host;
   private final int port;
   boolean keepAlive;
-  private boolean wsHandshakeConnection;
+  private boolean upgradedConnection;
   private WebSocketClientHandshaker handshaker;
   private volatile DefaultHttpClientRequest currentRequest;
   // Requests can be pipelined so we need a queue to keep track of requests
@@ -84,6 +84,7 @@ class ClientConnection extends ConnectionBase {
   void toWebSocket(String uri,
                    final WebSocketVersion wsVersion,
                    final MultiMap headers,
+                   int maxWebSocketFrameSize,
                    final Handler<WebSocket> wsConnect) {
     if (ws != null) {
       throw new IllegalStateException("Already websocket");
@@ -114,10 +115,10 @@ class ClientConnection extends ConnectionBase {
       } else {
         nettyHeaders = null;
       }
-      handshaker = WebSocketClientHandshakerFactory.newHandshaker(wsuri, version, null, false, nettyHeaders);
+      handshaker = WebSocketClientHandshakerFactory.newHandshaker(wsuri, version, null, false,
+                                                                  nettyHeaders, maxWebSocketFrameSize);
       final ChannelPipeline p = channel.pipeline();
       p.addBefore("handler", "handshakeCompleter", new HandshakeInboundHandler(wsConnect));
-
       handshaker.handshake(channel).addListener(new ChannelFutureListener() {
         @Override
         public void operationComplete(ChannelFuture future) throws Exception {
@@ -126,7 +127,7 @@ class ClientConnection extends ConnectionBase {
           }
         }
       });
-      wsHandshakeConnection = true;
+      upgradedConnection = true;
 
     } catch (Exception e) {
       handleException(e);
@@ -137,82 +138,89 @@ class ClientConnection extends ConnectionBase {
     private final Handler<WebSocket> wsConnect;
     private final DefaultContext context;
     private FullHttpResponse response;
-    private boolean handshaking;
-    private Queue<Object> buffered = new ArrayDeque<>();
+    private boolean handshaking = true;
+    private final Queue<Object> buffered = new ArrayDeque<>();
     public HandshakeInboundHandler(final Handler<WebSocket> wsConnect) {
       this.wsConnect = wsConnect;
       this.context = vertx.getContext();
     }
 
     @Override
-    public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+      super.channelInactive(ctx);
       context.execute(ctx.channel().eventLoop(), new Runnable() {
+        @Override
         public void run() {
-          boolean fire = false;
-          try {
-
-            if (handshaker != null && !handshaking) {
-              if (msg instanceof HttpResponse) {
-                HttpResponse resp = (HttpResponse) msg;
-                if (resp.getStatus().code() != 101) {
-                  throw new WebSocketHandshakeException("Websocket connection attempt returned HTTP status code " + resp.getStatus().code());
-                }
-                response = new DefaultFullHttpResponse(resp.getProtocolVersion(), resp.getStatus());
-                response.headers().add(resp.headers());
-              }
-
-              if (msg instanceof HttpContent) {
-                if (response != null) {
-                  response.content().writeBytes(((HttpContent) msg).content());
-                  if (msg instanceof LastHttpContent) {
-                    response.trailingHeaders().add(((LastHttpContent) msg).trailingHeaders());
-                    // copy over messages that are not processed yet
-                    handshakeComplete(ctx, response);
-                    channel.pipeline().remove(HandshakeInboundHandler.this);
-
-                    fire = true;
-                  }
-                }
-              }
-            } else {
-              buffered.add(msg);
-            }
-          } catch (WebSocketHandshakeException e) {
-            fire = false;
-            for (;;) {
-              Object m = buffered.poll();
-              if (m == null) {
-                break;
-              }
-            }
-            client.handleException(e);
-          } finally {
-            if (fire) {
-              for (;;) {
-                Object m = buffered.poll();
-                if (m == null) {
-                  break;
-                }
-                ctx.fireChannelRead(m);
-              }
-            }
+          // if still handshaking this means we not got any response back from the server and so need to notify the client
+          // about it as otherwise the client would never been notified.
+          if (handshaking) {
+            handleException(new WebSocketHandshakeException("Connection closed while handshake in process"));
           }
         }
       });
+    }
 
+    @Override
+    public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
+      context.execute(ctx.channel().eventLoop(), new Runnable() {
+        public void run() {
+          if (handshaker != null && handshaking) {
+            if (msg instanceof HttpResponse) {
+              HttpResponse resp = (HttpResponse) msg;
+              if (resp.getStatus().code() != 101) {
+                handleException(new WebSocketHandshakeException("Websocket connection attempt returned HTTP status code " + resp.getStatus().code()));
+                return;
+              }
+              response = new DefaultFullHttpResponse(resp.getProtocolVersion(), resp.getStatus());
+              response.headers().add(resp.headers());
+            }
+
+            if (msg instanceof HttpContent) {
+              if (response != null) {
+                response.content().writeBytes(((HttpContent) msg).content());
+                if (msg instanceof LastHttpContent) {
+                  response.trailingHeaders().add(((LastHttpContent) msg).trailingHeaders());
+                  try {
+                    handshakeComplete(ctx, response);
+                    channel.pipeline().remove(HandshakeInboundHandler.this);
+                    for (;;) {
+                      Object m = buffered.poll();
+                      if (m == null) {
+                        break;
+                      }
+                      ctx.fireChannelRead(m);
+                    }
+                  } catch (WebSocketHandshakeException e) {
+                    actualClose();
+                    handleException(e);
+                  }
+                }
+              }
+            }
+          } else {
+            buffered.add(msg);
+          }
+        }
+      });
+    }
+
+    private void handleException(WebSocketHandshakeException e) {
+      handshaking = false;
+      buffered.clear();
+      client.handleException(e);
     }
 
     private void handshakeComplete(ChannelHandlerContext ctx, FullHttpResponse response) {
-      handshaking = true;
-      try {
-        //ctx.pipeline().addAfter(ctx.name(), "websocketConverter", WebSocketConvertHandler.INSTANCE);
-        ws = new DefaultWebSocket(vertx, ClientConnection.this);
-        handshaker.finishHandshake(channel, response);
-        log.debug("WebSocket handshake complete");
-        wsConnect.handle(ws);
-      } catch (WebSocketHandshakeException e) {
-        client.handleException(e);
+      handshaking = false;
+      ChannelHandler handler = ctx.pipeline().get(HttpContentDecompressor.class);
+      if (handler != null) {
+        // remove decompressor as its not needed anymore once connection was upgraded to websockets
+        ctx.pipeline().remove(handler);
       }
+      ws = new DefaultWebSocket(vertx, ClientConnection.this);
+      handshaker.finishHandshake(channel, response);
+      log.debug("WebSocket handshake complete");
+      wsConnect.handle(ws);
     }
   }
 
@@ -222,14 +230,20 @@ class ClientConnection extends ConnectionBase {
 
   @Override
   public void close() {
-    if (wsHandshakeConnection) {
-      // Do nothing - this will be ugraded
+    if (upgradedConnection) {
+      // Close it
+      actualClose();
     } else if (!keepAlive) {
-      //Close it
-      super.close();
+      // Close it
+      actualClose();
     } else {
+      // Keep alive
       client.returnConnection(this);
     }
+  }
+
+  void actualClose() {
+    super.close();
   }
 
   boolean isClosed() {
@@ -347,16 +361,24 @@ class ClientConnection extends ConnectionBase {
   }
 
   NetSocket createNetSocket() {
-    DefaultNetSocket socket = new DefaultNetSocket(vertx, channel, context);
+    // connection was upgraded to raw TCP socket
+    upgradedConnection = true;
+    DefaultNetSocket socket = new DefaultNetSocket(vertx, channel, context, client.tcpHelper, true);
     Map<Channel, DefaultNetSocket> connectionMap = new HashMap<Channel, DefaultNetSocket>(1);
     connectionMap.put(channel, socket);
 
     // Flush out all pending data
     endReadAndFlush();
 
+
     // remove old http handlers and replace the old handler with one that handle plain sockets
-    channel.pipeline().remove("codec");
-    channel.pipeline().replace("handler", "handler", new VertxNetHandler(client.vertx, connectionMap) {
+    ChannelPipeline pipeline = channel.pipeline();
+    ChannelHandler inflater = pipeline.get(HttpContentDecompressor.class);
+    if (inflater != null) {
+      pipeline.remove(inflater);
+    }
+    pipeline.remove("codec");
+    pipeline.replace("handler", "handler", new VertxNetHandler(client.vertx, connectionMap) {
       @Override
       public void exceptionCaught(ChannelHandlerContext chctx, Throwable t) throws Exception {
         // remove from the real mapping

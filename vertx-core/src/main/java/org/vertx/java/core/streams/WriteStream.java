@@ -1,22 +1,21 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.streams;
 
-import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 
 /**
@@ -29,7 +28,7 @@ import org.vertx.java.core.buffer.Buffer;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public interface WriteStream<T> extends ExceptionSupport<T> {
+public interface WriteStream<T> extends ExceptionSupport<T>, DrainSupport<T> {
 
   /**
    * Write some data to the stream. The data is put on an internal write queue, and the write actually happens
@@ -37,23 +36,4 @@ public interface WriteStream<T> extends ExceptionSupport<T> {
    * check the {@link #writeQueueFull} method before writing. This is done automatically if using a {@link Pump}.
    */
   T write(Buffer data);
-
-  /**
-   * Set the maximum size of the write queue to {@code maxSize}. You will still be able to write to the stream even
-   * if there is more than {@code maxSize} bytes in the write queue. This is used as an indicator by classes such as
-   * {@code Pump} to provide flow control.
-   */
-  T setWriteQueueMaxSize(int maxSize);
-
-  /**
-   * This will return {@code true} if there are more bytes in the write queue than the value set using {@link
-   * #setWriteQueueMaxSize}
-   */
-  boolean writeQueueFull();
-
-  /**
-   * Set a drain handler on the stream. If the write queue is full, then the handler will be called when the write
-   * queue has been reduced to maxSize / 2. See {@link Pump} for an example of this being used.
-   */
-  T drainHandler(Handler<Void> handler);
 }

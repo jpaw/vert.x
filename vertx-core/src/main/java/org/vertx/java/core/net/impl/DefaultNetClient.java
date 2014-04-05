@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.net.impl;
@@ -25,13 +25,15 @@ import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
-import org.vertx.java.core.impl.*;
+import org.vertx.java.core.impl.Closeable;
+import org.vertx.java.core.impl.DefaultContext;
+import org.vertx.java.core.impl.DefaultFutureResult;
+import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.net.NetClient;
 import org.vertx.java.core.net.NetSocket;
 
-import javax.net.ssl.SSLEngine;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,7 +44,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DefaultNetClient implements NetClient {
 
   private static final Logger log = LoggerFactory.getLogger(DefaultNetClient.class);
-  private static final ExceptionDispatchHandler EXCEPTION_DISPATCH_HANDLER = new ExceptionDispatchHandler();
 
   private final VertxInternal vertx;
   private final DefaultContext actualCtx;
@@ -314,12 +315,9 @@ public class DefaultNetClient implements NetClient {
         @Override
         protected void initChannel(Channel ch) throws Exception {
           ChannelPipeline pipeline = ch.pipeline();
-          pipeline.addLast("exceptionDispatcher", EXCEPTION_DISPATCH_HANDLER);
-
           if (tcpHelper.isSSL()) {
-            SSLEngine engine = tcpHelper.getSSLContext().createSSLEngine();
-            engine.setUseClientMode(true); //We are on the client side of the connection
-            pipeline.addLast("ssl", new SslHandler(engine));
+            SslHandler sslHandler = tcpHelper.createSslHandler(vertx, true);
+            pipeline.addLast("ssl", sslHandler);
           }
           if (tcpHelper.isSSL()) {
             // only add ChunkedWriteHandler when SSL is enabled otherwise it is not needed as FileRegion is used.
@@ -388,7 +386,7 @@ public class DefaultNetClient implements NetClient {
   }
 
   private void doConnected(Channel ch, final Handler<AsyncResult<NetSocket>> connectHandler) {
-    DefaultNetSocket sock = new DefaultNetSocket(vertx, ch, actualCtx);
+    DefaultNetSocket sock = new DefaultNetSocket(vertx, ch, actualCtx, tcpHelper, true);
     socketMap.put(ch, sock);
     connectHandler.handle(new DefaultFutureResult<NetSocket>(sock));
   }

@@ -1,40 +1,38 @@
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
+ *
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
+ *
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
+ *
+ * You may elect to redistribute this code under either of these licenses.
+ */
+
 package org.vertx.java.platform.impl.resolver;
 
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.Vertx;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.HttpClientResponse;
+import org.vertx.java.core.logging.Logger;
+import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.platform.impl.ModuleIdentifier;
 
-/*
- * Copyright 2013 Red Hat, Inc.
- *
- * Red Hat licenses this file to you under the Apache License, version 2.0
- * (the "License"); you may not use this file except in compliance with the
- * License.  You may obtain a copy of the License at:
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
- * License for the specific language governing permissions and limitations
- * under the License.
- *
- * @author <a href="http://tfox.org">Tim Fox</a>
- *
- * This resolver works with any HTTP server that can serve modules from GETs to Maven style urls
- *
- */
 public class MavenResolution extends HttpResolution {
-
+  private static final Logger log = LoggerFactory.getLogger(MavenResolution.class);
   protected String contentRoot;
   protected ModuleIdentifier moduleIdentifier;
   protected String uriRoot;
 
-  public MavenResolution(Vertx vertx, String repoHost, int repoPort, ModuleIdentifier moduleIdentifier, String filename,
+  public MavenResolution(Vertx vertx, String repoScheme, String repoUsername, String repoPassword, String repoHost, int repoPort, ModuleIdentifier moduleIdentifier, String filename,
                          String contentRoot) {
-    super(vertx, repoHost, repoPort, moduleIdentifier, filename);
+    super(vertx, repoScheme, repoUsername, repoPassword, repoHost, repoPort, moduleIdentifier, filename);
     this.contentRoot = contentRoot;
     this.moduleIdentifier = moduleIdentifier;
     uriRoot = getMavenURI(moduleIdentifier);
@@ -50,7 +48,7 @@ public class MavenResolution extends HttpResolution {
   }
 
   protected void getModule() {
-    createClient(repoHost, repoPort);
+    createClient(repoScheme, repoHost, repoPort);
     if (moduleIdentifier.getVersion().endsWith("-SNAPSHOT")) {
       addHandler(200, new Handler<HttpClientResponse>() {
         @Override
@@ -69,13 +67,20 @@ public class MavenResolution extends HttpResolution {
                   addOKHandler();
                   removeHandler(404);
                   String actualURI = getResourceName(data, contentRoot, moduleIdentifier, uriRoot, false);
-                  makeRequest(repoHost, repoPort, actualURI);
+                  makeRequest(repoScheme, repoHost, repoPort, actualURI);
                 }
               });
-              makeRequest(repoHost, repoPort, actualURI);
+              makeRequest(repoScheme, repoHost, repoPort, actualURI);
             }
           });
         }
+      });
+      addHandler(401,new Handler<HttpClientResponse>() {
+          @Override
+          public void handle(HttpClientResponse event) {
+             log.info(event.statusCode() + " - "+event.statusMessage());
+             removeHandler(401);
+          }
       });
       addHandler(404, new Handler<HttpClientResponse>() {
         @Override
@@ -84,8 +89,9 @@ public class MavenResolution extends HttpResolution {
           attemptDirectDownload();
         }
       });
+      addRedirectHandlers();
       // First we make a request to maven-metadata.xml
-      makeRequest(repoHost, repoPort, contentRoot + '/' + uriRoot + "maven-metadata.xml");
+      makeRequest(repoScheme, repoHost, repoPort, contentRoot + '/' + uriRoot + "maven-metadata.xml");
     } else {
       attemptDirectDownload();
     }
@@ -93,16 +99,24 @@ public class MavenResolution extends HttpResolution {
 
   protected void attemptDirectDownload() {
     addOKHandler();
+    addHandler(401, new Handler<HttpClientResponse>() {
+        @Override
+        public void handle(HttpClientResponse event) {
+            log.info(event.statusCode() + " - "+event.statusMessage());
+            removeHandler(401);
+        }
+    });
     addHandler(404, new Handler<HttpClientResponse>() {
       @Override
       public void handle(HttpClientResponse resp) {
         // Not found with -mod suffix - try the old naming (we keep this for backward compatibility)
         addOKHandler();
         removeHandler(404);
-        makeRequest(repoHost, repoPort, getNonVersionedResourceName(contentRoot, moduleIdentifier, uriRoot, false));
+        makeRequest(repoScheme, repoHost, repoPort, getNonVersionedResourceName(contentRoot, moduleIdentifier, uriRoot, false));
       }
     });
-    makeRequest(repoHost, repoPort, getNonVersionedResourceName(contentRoot, moduleIdentifier, uriRoot, true));
+    addRedirectHandlers();
+    makeRequest(repoScheme, repoHost, repoPort, getNonVersionedResourceName(contentRoot, moduleIdentifier, uriRoot, true));
   }
 
   static String getResourceName(String data, String contentRoot, ModuleIdentifier identifier, String uriRoot,

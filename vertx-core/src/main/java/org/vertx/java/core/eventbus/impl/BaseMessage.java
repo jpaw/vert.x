@@ -1,26 +1,28 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.eventbus.impl;
 
 import io.netty.util.CharsetUtil;
-
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
+import org.vertx.java.core.eventbus.ReplyException;
+import org.vertx.java.core.eventbus.ReplyFailure;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.net.NetSocket;
@@ -45,6 +47,11 @@ public abstract class BaseMessage<U> implements Message<U> {
     this.send = send;
     this.body = body;
     this.address = address;
+  }
+
+  @Override
+  public String address() {
+    return address;
   }
 
   @Override
@@ -138,8 +145,18 @@ public abstract class BaseMessage<U> implements Message<U> {
   }
 
   @Override
+  public <T> void replyWithTimeout(long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(DefaultEventBus.createMessage(true, replyAddress, null), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(Object message, Handler<Message<T>> replyHandler) {
     sendReply(DefaultEventBus.createMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void replyWithTimeout(Object message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(DefaultEventBus.createMessage(true, replyAddress, message), timeout, replyHandler);
   }
 
   @Override
@@ -148,13 +165,28 @@ public abstract class BaseMessage<U> implements Message<U> {
   }
 
   @Override
+  public <T> void replyWithTimeout(JsonObject message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+	    sendReplyWithTimeout(new JsonObjectMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+  
+  @Override
   public <T> void reply(BonaPortable message, Handler<Message<T>> replyHandler) {
     sendReply(new BonaPortableMessage(true, replyAddress, message), replyHandler);
   }
 
   @Override
+  public <T> void replyWithTimeout(BonaPortable message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+	    sendReplyWithTimeout(new BonaPortableMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+  
+  @Override
   public <T> void reply(JsonArray message, Handler<Message<T>> replyHandler) {
     sendReply(new JsonArrayMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void replyWithTimeout(JsonArray message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new JsonArrayMessage(true, replyAddress, message), timeout, replyHandler);
   }
 
   @Override
@@ -163,13 +195,28 @@ public abstract class BaseMessage<U> implements Message<U> {
   }
 
   @Override
+  public <T> void replyWithTimeout(String message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new StringMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(Buffer message, Handler<Message<T>> replyHandler) {
     sendReply(new BufferMessage(true, replyAddress, message), replyHandler);
   }
 
   @Override
+  public <T> void replyWithTimeout(Buffer message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new BufferMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(byte[] message, Handler<Message<T>> replyHandler) {
-    sendReply(new ByteArrayMessage(true, replyAddress, message), replyHandler);
+    sendReply(new ByteArrayMessage(true, replyAddress, message),  replyHandler);
+  }
+
+  @Override
+  public <T> void replyWithTimeout(byte[] message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new ByteArrayMessage(true, replyAddress, message), timeout, replyHandler);
   }
 
   @Override
@@ -178,8 +225,18 @@ public abstract class BaseMessage<U> implements Message<U> {
   }
 
   @Override
+  public <T> void replyWithTimeout(Integer message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new IntMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(Long message, Handler<Message<T>> replyHandler) {
     sendReply(new LongMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void replyWithTimeout(Long message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new LongMessage(true, replyAddress, message), timeout, replyHandler);
   }
 
   @Override
@@ -188,8 +245,18 @@ public abstract class BaseMessage<U> implements Message<U> {
   }
 
   @Override
+  public <T> void replyWithTimeout(Short message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new ShortMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(Character message, Handler<Message<T>> replyHandler) {
-     sendReply(new CharacterMessage(true, replyAddress, message), replyHandler);
+    sendReply(new CharacterMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void replyWithTimeout(Character message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new CharacterMessage(true, replyAddress, message), timeout, replyHandler);
   }
 
   @Override
@@ -198,13 +265,33 @@ public abstract class BaseMessage<U> implements Message<U> {
   }
 
   @Override
+  public <T> void replyWithTimeout(Boolean message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new BooleanMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(Float message, Handler<Message<T>> replyHandler) {
     sendReply(new FloatMessage(true, replyAddress, message), replyHandler);
   }
 
   @Override
+  public <T> void replyWithTimeout(Float message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new FloatMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
   public <T> void reply(Double message, Handler<Message<T>> replyHandler) {
     sendReply(new DoubleMessage(true, replyAddress, message), replyHandler);
+  }
+
+  @Override
+  public <T> void replyWithTimeout(Double message, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    sendReplyWithTimeout(new DoubleMessage(true, replyAddress, message), timeout, replyHandler);
+  }
+
+  @Override
+  public void fail(int failureCode, String message) {
+    sendReply(new ReplyFailureMessage(replyAddress, new ReplyException(ReplyFailure.RECIPIENT_FAILURE, failureCode, message)), null);
   }
 
   protected BaseMessage(Buffer readBuff) {
@@ -277,6 +364,12 @@ public abstract class BaseMessage<U> implements Message<U> {
   private <T> void sendReply(BaseMessage<?> msg, Handler<Message<T>> replyHandler) {
     if (bus != null && replyAddress != null) {
       bus.sendReply(sender, msg, replyHandler);
+    }
+  }
+
+  private <T> void sendReplyWithTimeout(BaseMessage msg, long timeout, Handler<AsyncResult<Message<T>>> replyHandler) {
+    if (bus != null) {
+      bus.sendReplyWithTimeout(sender, msg, timeout, replyHandler);
     }
   }
 }

@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.tests.core.eventbus;
@@ -159,7 +159,17 @@ public class JavaEchoTest extends TestBase {
   }
 
   @Test
+  public void testEchoJsonArray() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
   public void testEchoNullJson() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testEchoNullJsonArray() {
     runPeerTest(getMethodName());
   }
 
@@ -182,4 +192,51 @@ public class JavaEchoTest extends TestBase {
   public void testEchoNullShort() {
     runPeerTest(getMethodName());
   }
+
+  @Test
+  public void testSendWithTimeoutReply() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testSendWithTimeoutNoReply() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testSendReplyWithTimeoutNoReplyHandler() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testSendWithDefaultTimeoutNoReply() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testReplyWithTimeoutReply() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testReplyWithTimeoutNoReply() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testReplyNoHandlers() {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testReplyRecipientFailure() {
+    runPeerTest(getMethodName());
+  }
+
+  @Test
+  public void testReplyRecipientFailureStandardHandler() {
+    runPeerTest(getMethodName());
+  }
+
+
 }

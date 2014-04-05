@@ -1,22 +1,23 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.sockjs.impl;
 
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.Vertx;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.HttpServerRequest;
@@ -26,6 +27,8 @@ import org.vertx.java.core.http.impl.WebSocketMatcher;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.sockjs.SockJSSocket;
+
+import java.net.InetSocketAddress;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -37,10 +40,18 @@ class RawWebSocketTransport {
   private static class RawWSSockJSSocket extends SockJSSocketBase {
 
     private ServerWebSocket ws;
+    private MultiMap headers;
 
     RawWSSockJSSocket(Vertx vertx, ServerWebSocket ws) {
       super(vertx);
       this.ws = ws;
+      ws.closeHandler(new Handler<Void>() {
+        @Override
+        public void handle(Void v) {
+          // Make sure the writeHandler gets unregistered
+          RawWSSockJSSocket.super.close();
+        }
+      });
     }
 
     public SockJSSocket dataHandler(Handler<Buffer> handler) {
@@ -92,6 +103,28 @@ class RawWebSocketTransport {
       ws.close();
     }
 
+    @Override
+    public InetSocketAddress remoteAddress() {
+      return ws.remoteAddress();
+    }
+
+    @Override
+    public InetSocketAddress localAddress() {
+      return ws.localAddress();
+    }
+
+    @Override
+    public MultiMap headers() {
+      if (headers == null) {
+        headers = BaseTransport.removeCookieHeaders(ws.headers());
+      }
+      return headers;
+    }
+
+    @Override
+    public String uri() {
+      return ws.uri();
+    }
   }
 
   RawWebSocketTransport(final Vertx vertx, WebSocketMatcher wsMatcher, RouteMatcher rm, String basePath,

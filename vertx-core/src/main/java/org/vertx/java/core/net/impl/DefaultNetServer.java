@@ -1,18 +1,18 @@
 
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.net.impl;
@@ -32,17 +32,21 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.VoidHandler;
-import org.vertx.java.core.impl.*;
+import org.vertx.java.core.impl.Closeable;
+import org.vertx.java.core.impl.DefaultContext;
+import org.vertx.java.core.impl.DefaultFutureResult;
+import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.net.NetServer;
 import org.vertx.java.core.net.NetSocket;
 
-import javax.net.ssl.SSLEngine;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -50,7 +54,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DefaultNetServer implements NetServer, Closeable {
 
   private static final Logger log = LoggerFactory.getLogger(DefaultNetServer.class);
-  private static final ExceptionDispatchHandler EXCEPTION_DISPATCH_HANDLER = new ExceptionDispatchHandler();
 
   private final VertxInternal vertx;
   private final DefaultContext actualCtx;
@@ -60,12 +63,12 @@ public class DefaultNetServer implements NetServer, Closeable {
 
   private ChannelGroup serverChannelGroup;
   private boolean listening;
-  private ServerID id;
+  private volatile ServerID id;
   private DefaultNetServer actualServer;
   private final VertxEventLoopGroup availableWorkers = new VertxEventLoopGroup();
   private final HandlerManager<NetSocket> handlerManager = new HandlerManager<>(availableWorkers);
   private String host;
-  private int port;
+  private volatile int port;
   private ChannelFuture bindFuture;
 
   public DefaultNetServer(VertxInternal vertx) {
@@ -121,25 +124,9 @@ public class DefaultNetServer implements NetServer, Closeable {
           @Override
           protected void initChannel(Channel ch) throws Exception {
             ChannelPipeline pipeline = ch.pipeline();
-            pipeline.addLast("exceptionDispatcher", EXCEPTION_DISPATCH_HANDLER);
             if (tcpHelper.isSSL()) {
-              SSLEngine engine = tcpHelper.getSSLContext().createSSLEngine();
-              engine.setUseClientMode(false);
-              switch (tcpHelper.getClientAuth()) {
-                case REQUEST: {
-                  engine.setWantClientAuth(true);
-                  break;
-                }
-                case REQUIRED: {
-                  engine.setNeedClientAuth(true);
-                  break;
-                }
-                case NONE: {
-                  engine.setNeedClientAuth(false);
-                  break;
-                }
-              }
-              pipeline.addLast("ssl", new SslHandler(engine));
+              SslHandler sslHandler = tcpHelper.createSslHandler(vertx, false);
+              pipeline.addLast("ssl", sslHandler);
             }
             if (tcpHelper.isSSL()) {
               // only add ChunkedWriteHandler when SSL is enabled otherwise it is not needed as FileRegion is used.
@@ -161,11 +148,17 @@ public class DefaultNetServer implements NetServer, Closeable {
           bindFuture = bootstrap.bind(addr).addListener(new ChannelFutureListener() {
             @Override
             public void operationComplete(ChannelFuture future) throws Exception {
-              if (future.isSuccess()) {
+              runListeners();
+            }
+          });
+          this.addListener(new Runnable() {
+            @Override
+            public void run() {
+              if (bindFuture.isSuccess()) {
                 log.trace("Net server listening on " + host + ":" + bindFuture.channel().localAddress());
                 // Update port to actual port - wildcard port 0 might have been used
                 DefaultNetServer.this.port = ((InetSocketAddress)bindFuture.channel().localAddress()).getPort();
-                id = new ServerID(DefaultNetServer.this.port, id.host);
+                DefaultNetServer.this.id = new ServerID(DefaultNetServer.this.port, id.host);
                 vertx.sharedNetServers().put(id, DefaultNetServer.this);
               } else {
                 vertx.sharedNetServers().remove(id);
@@ -205,32 +198,53 @@ public class DefaultNetServer implements NetServer, Closeable {
       }
 
       // just add it to the future so it gets notified once the bind is complete
-      actualServer.bindFuture.addListener(new ChannelFutureListener() {
-        @Override
-        public void operationComplete(final ChannelFuture future) throws Exception {
+      actualServer.addListener(new Runnable() {
+        public void run() {
           if (listenHandler != null) {
             final AsyncResult<NetServer> res;
-            if (future.isSuccess()) {
+            if (actualServer.bindFuture.isSuccess()) {
               res = new DefaultFutureResult<NetServer>(DefaultNetServer.this);
             } else {
               listening = false;
-              res = new DefaultFutureResult<>(future.cause());
+              res = new DefaultFutureResult<>(actualServer.bindFuture.cause());
             }
-            actualCtx.execute(future.channel().eventLoop(), new Runnable() {
+            actualCtx.execute(actualServer.bindFuture.channel().eventLoop(), new Runnable() {
               @Override
               public void run() {
                 listenHandler.handle(res);
               }
             });
-          } else if (!future.isSuccess()) {
+          } else if (!actualServer.bindFuture.isSuccess()) {
             // No handler - log so user can see failure
-            actualCtx.reportException(future.cause());
+            actualCtx.reportException(actualServer.bindFuture.cause());
             listening = false;
           }
         }
       });
+
     }
     return this;
+  }
+
+  private Queue<Runnable> bindListeners = new ConcurrentLinkedQueue<>();
+
+  private boolean listenersRun;
+
+  private synchronized void addListener(Runnable runner) {
+    if (!listenersRun) {
+      bindListeners.add(runner);
+    } else {
+      // Run it now
+      runner.run();
+    }
+  }
+
+  private synchronized void runListeners() {
+    Runnable runner;
+    while ((runner = bindListeners.poll()) != null) {
+      runner.run();
+    }
+    listenersRun = true;
   }
 
   public void close() {
@@ -545,7 +559,7 @@ public class DefaultNetServer implements NetServer, Closeable {
     }
 
     private void doConnected(Channel ch, HandlerHolder<NetSocket> handler) {
-      DefaultNetSocket sock = new DefaultNetSocket(vertx, ch, handler.context);
+      DefaultNetSocket sock = new DefaultNetSocket(vertx, ch, handler.context, tcpHelper, false);
       socketMap.put(ch, sock);
       handler.handler.handle(sock);
     }

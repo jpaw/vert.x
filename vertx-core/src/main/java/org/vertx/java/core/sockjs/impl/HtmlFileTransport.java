@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.sockjs.impl;
@@ -82,6 +82,7 @@ class HtmlFileTransport extends BaseTransport {
 
         String sessionID = req.params().get("param0");
         Session session = getSession(config.getLong("session_timeout"), config.getLong("heartbeat_period"), sessionID, sockHandler);
+        session.setInfo(req.localAddress(), req.remoteAddress(), req.uri(), req.headers());
         session.register(new HtmlFileListener(config.getInteger("max_bytes_streaming"), req, callback, session));
       }
     });
@@ -90,18 +91,15 @@ class HtmlFileTransport extends BaseTransport {
   private class HtmlFileListener extends BaseListener {
 
     final int maxBytesStreaming;
-    final HttpServerRequest req;
     final String callback;
-    final Session session;
     boolean headersWritten;
     int bytesSent;
     boolean closed;
 
     HtmlFileListener(int maxBytesStreaming, HttpServerRequest req, String callback, Session session) {
+      super(req, session);
       this.maxBytesStreaming = maxBytesStreaming;
-      this.req = req;
       this.callback = callback;
-      this.session = session;
       addCloseHandler(req.response(), session);
     }
 

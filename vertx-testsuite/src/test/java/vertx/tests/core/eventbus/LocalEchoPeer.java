@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package vertx.tests.core.eventbus;
@@ -21,10 +21,14 @@ import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.core.Future;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.eventbus.Message;
+import org.vertx.java.core.eventbus.ReplyException;
+import org.vertx.java.core.eventbus.ReplyFailure;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.util.UUID;
+
+import static vertx.tests.core.eventbus.LocalEchoClient.TIMEOUT;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -127,7 +131,15 @@ public class LocalEchoPeer extends EventBusAppBase {
     echoInitialise();
   }
 
+  public void testEchoJsonArrayInitialise() {
+    echoInitialise();
+  }
+
   public void testEchoNullJsonInitialise() {
+    echoInitialise();
+  }
+
+  public void testEchoNullJsonArrayInitialise() {
     echoInitialise();
   }
 
@@ -145,6 +157,193 @@ public class LocalEchoPeer extends EventBusAppBase {
 
   public void testEchoNullShortInitialise() {
     echoInitialise();
+  }
+
+  public void testSendWithTimeoutReplyInitialise() {
+    String address = "some-address";
+    eb.registerHandler(address, new Handler<Message<String>>() {
+      @Override
+      public void handle(Message<String> message) {
+        message.reply("bar");
+      }
+    }, new Handler<AsyncResult<Void>>() {
+          @Override
+          public void handle(AsyncResult<Void> res) {
+            if (res.succeeded()) {
+              tu.testComplete();
+            } else {
+              tu.azzert(false, "Failed to register");
+            }
+          }
+        });
+  }
+
+  public void testSendWithTimeoutNoReplyInitialise() {
+    String address = "some-address";
+    eb.registerHandler(address, new Handler<Message<String>>() {
+      @Override
+      public void handle(final Message<String> message) {
+        // Reply *after* the timeout
+        vertx.setTimer(TIMEOUT * 2, new Handler<Long>() {
+          @Override
+          public void handle(Long tid) {
+            message.reply("bar");
+          }
+        });
+      }
+    }, new Handler<AsyncResult<Void>>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        if (res.succeeded()) {
+          tu.testComplete();
+        } else {
+          tu.azzert(false, "Failed to register");
+        }
+      }
+    });
+
+  }
+
+  public void testSendReplyWithTimeoutNoReplyHandlerInitialise() {
+
+    String address = "some-address";
+    eb.registerHandler(address, new Handler<Message<String>>() {
+      @Override
+      public void handle(final Message<String> message) {
+        // Reply *after* the timeout
+        message.replyWithTimeout("bar", TIMEOUT, new Handler<AsyncResult<Message<String>>>() {
+          @Override
+          public void handle(AsyncResult<Message<String>> event) {
+            tu.azzert(event.failed(), "Should not get a reply after timeout");
+            tu.azzert(event.cause() instanceof ReplyException);
+            ReplyException re = (ReplyException)event.cause();
+            tu.azzert(ReplyFailure.NO_HANDLERS == re.failureType());
+            tu.testComplete();
+          }
+        });
+      }
+    }, new Handler<AsyncResult<Void>>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        if (res.succeeded()) {
+          tu.testComplete();
+        } else {
+          tu.azzert(false, "Failed to register");
+        }
+      }
+    });
+  }
+
+  public void testSendWithDefaultTimeoutNoReplyInitialise() {
+
+    eb.setDefaultReplyTimeout(TIMEOUT);
+    String address = "some-address";
+    eb.registerHandler(address, new Handler<Message<String>>() {
+      @Override
+      public void handle(final Message<String> message) {
+        // Reply *after* the timeout
+        vertx.setTimer(TIMEOUT * 2, new Handler<Long>() {
+          @Override
+          public void handle(Long tid) {
+            message.reply("bar");
+          }
+        });
+      }
+    }, new Handler<AsyncResult<Void>>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        if (res.succeeded()) {
+          tu.testComplete();
+        } else {
+          tu.azzert(false, "Failed to register");
+        }
+      }
+    });
+
+  }
+
+  public void testReplyWithTimeoutReplyInitialise() {
+
+    String address = "some-address";
+    eb.registerHandler(address, new Handler<Message<String>>() {
+      @Override
+      public void handle(final Message<String> message) {
+        message.replyWithTimeout("bar", TIMEOUT, new Handler<AsyncResult<Message<String>>>() {
+          @Override
+          public void handle(AsyncResult<Message<String>> replyReply) {
+            tu.azzert(replyReply.succeeded());
+            tu.azzert("quux".equals(replyReply.result().body()));
+            tu.testComplete();
+          }
+        });
+      }
+    }, new Handler<AsyncResult<Void>>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        if (res.succeeded()) {
+          tu.testComplete();
+        } else {
+          tu.azzert(false, "Failed to register");
+        }
+      }
+    });
+
+  }
+
+  public void testReplyWithTimeoutNoReplyInitialise() {
+
+    String address = "some-address";
+    final long start = System.currentTimeMillis();
+    eb.registerHandler(address, new Handler<Message<String>>() {
+      @Override
+      public void handle(final Message<String> message) {
+
+        message.replyWithTimeout("bar", TIMEOUT, new Handler<AsyncResult<Message<String>>>() {
+          boolean called;
+          @Override
+          public void handle(AsyncResult<Message<String>> replyReply) {
+            tu.azzert(!called);
+            tu.azzert(replyReply.failed());
+            tu.azzert(System.currentTimeMillis() - start >= TIMEOUT);
+            tu.testComplete();
+            called = true;
+          }
+        });
+      }
+    }, new Handler<AsyncResult<Void>>() {
+      @Override
+      public void handle(AsyncResult<Void> res) {
+        if (res.succeeded()) {
+          tu.testComplete();
+        } else {
+          tu.azzert(false, "Failed to register");
+        }
+      }
+    });
+  }
+
+  public void testReplyRecipientFailureInitialise() {
+    String address = "some-address";
+    final String msg = "too many giraffes";
+    eb.registerHandler(address, new Handler<Message<String>>() {
+          @Override
+          public void handle(Message<String> message) {
+            message.fail(23, msg);
+          }
+        }, new Handler<AsyncResult<Void>>() {
+          @Override
+          public void handle(AsyncResult<Void> res) {
+            if (res.succeeded()) {
+              tu.testComplete();
+            } else {
+              tu.azzert(false, "Failed to register");
+            }
+          }
+        });
+  }
+
+  public void testReplyRecipientFailureStandardHandlerInitialise() {
+    testReplyRecipientFailureInitialise();
   }
 
   private void echoInitialise() {

@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 package org.vertx.java.core.buffer;
 
@@ -220,11 +220,31 @@ public class Buffer {
   }
 
   /**
+   * Appends the specified {@code Buffer} starting at the {@code offset} using {@code len} to the end of this Buffer. The buffer will expand as necessary to accommodate
+   * any bytes written.<p>
+   * Returns a reference to {@code this} so multiple operations can be appended together.
+   */
+  public Buffer appendBuffer(Buffer buff, int offset,int len) {
+    buffer.writeBytes(buff.getByteBuf(), offset, len);
+    return this;
+  }
+
+  /**
    * Appends the specified {@code byte[]} to the end of the Buffer. The buffer will expand as necessary to accommodate any bytes written.<p>
    * Returns a reference to {@code this} so multiple operations can be appended together.
    */
   public Buffer appendBytes(byte[] bytes) {
     buffer.writeBytes(bytes);
+    return this;
+  }
+
+  /**
+   * Appends the specified number of bytes from {@code byte[]} to the end of the Buffer, starting at the given offset.
+   * The buffer will expand as necessary to accommodate any bytes written.<p>
+   * Returns a reference to {@code this} so multiple operations can be appended together.
+   */
+  public Buffer appendBytes(byte[] bytes, int offset, int len) {
+    buffer.writeBytes(bytes, offset, len);
     return this;
   }
 
@@ -371,6 +391,16 @@ public class Buffer {
   }
 
   /**
+   * Sets the bytes at position {@code pos} in the Buffer to the bytes represented by the {@code Buffer b} on the given {@code offset} and {@code len}.<p>
+   * The buffer will expand as necessary to accommodate any value written.
+   */
+  public Buffer setBuffer(int pos, Buffer b, int offset, int len) {
+    ensureWritable(pos, len);
+    buffer.setBytes(pos, b.getByteBuf(), offset, len);
+    return this;
+  }
+
+  /**
    * Sets the bytes at position {@code pos} in the Buffer to the bytes represented by the {@code ByteBuffer b}.<p>
    * The buffer will expand as necessary to accommodate any value written.
    */
@@ -387,6 +417,17 @@ public class Buffer {
   public Buffer setBytes(int pos, byte[] b) {
     ensureWritable(pos, b.length);
     buffer.setBytes(pos, b);
+    return this;
+  }
+
+
+  /**
+   * Sets the given number of bytes at position {@code pos} in the Buffer to the bytes represented by the {@code byte[] b}.<p></p>
+   * The buffer will expand as necessary to accommodate any value written.
+   */
+  public Buffer setBytes(int pos, byte[] b, int offset, int len) {
+    ensureWritable(pos, len);
+    buffer.setBytes(pos, b, offset, len);
     return this;
   }
 

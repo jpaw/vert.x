@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
@@ -34,7 +34,6 @@ import java.util.concurrent.TimeoutException;
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public class DefaultHttpClientRequest implements HttpClientRequest {
-
   private final DefaultHttpClient client;
   private final HttpRequest request;
   private final Handler<HttpClientResponse> respHandler;
@@ -63,24 +62,11 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
     this(client, method, uri, respHandler, context, false);
   }
 
-  /*
-  Raw request - used by websockets
-  Raw requests won't have any headers set automatically, like Content-Length and Connection
-  */
-  DefaultHttpClientRequest(final DefaultHttpClient client, final String method, final String uri,
-                           final Handler<HttpClientResponse> respHandler,
-                           final DefaultContext context,
-                           final ClientConnection conn) {
-    this(client, method, uri, respHandler, context, true);
-    this.conn = conn;
-    conn.setCurrentRequest(this);
-  }
-
   private DefaultHttpClientRequest(final DefaultHttpClient client, final String method, final String uri,
                                    final Handler<HttpClientResponse> respHandler,
                                    final DefaultContext context, final boolean raw) {
     this.client = client;
-    this.request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.valueOf(method), uri);
+    this.request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.valueOf(method), uri, false);
     this.chunked = false;
     this.respHandler = respHandler;
     this.context = context;
@@ -223,7 +209,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
   public void end(Buffer chunk) {
     check();
     if (!chunked && !contentLengthSet()) {
-      headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(chunk.length()));
+      headers().set(org.vertx.java.core.http.HttpHeaders.CONTENT_LENGTH, String.valueOf(chunk.length()));
     }
     write(chunk.getByteBuf(), true);
   }
@@ -244,6 +230,20 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
         handleTimeout(timeoutMs);
       }
     });
+    return this;
+  }
+
+  @Override
+  public HttpClientRequest putHeader(CharSequence name, CharSequence value) {
+    check();
+    headers().set(name, value);
+    return this;
+  }
+
+  @Override
+  public HttpClientRequest putHeader(CharSequence name, Iterable<CharSequence> values) {
+    check();
+    headers().set(name, values);
     return this;
   }
 
@@ -322,9 +322,14 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
       //they can capture any exceptions on connection
       client.getConnection(new Handler<ClientConnection>() {
         public void handle(ClientConnection conn) {
-          if (!conn.isClosed()) {
+          if (exceptionOccurred) {
+            // The request already timed out before it has left the pool waiter queue
+            // So return it
+            conn.close();
+          } else if (!conn.isClosed()) {
             connected(conn);
           } else {
+            // The connection has been closed - closed connections can be in the pool
             // Get another connection - Note that we DO NOT call connectionClosed() on the pool at this point
             // that is done asynchronously in the connection closeHandler()
             connect();
@@ -374,7 +379,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
 
   private boolean contentLengthSet() {
     if (headers != null) {
-      return headers.contains(HttpHeaders.Names.CONTENT_LENGTH);
+      return request.headers().contains(org.vertx.java.core.http.HttpHeaders.CONTENT_LENGTH);
     } else {
       return false;
     }
@@ -398,14 +403,19 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
 
   private void prepareHeaders() {
     HttpHeaders headers = request.headers();
-    headers.remove(HttpHeaders.Names.TRANSFER_ENCODING);
+    headers.remove(org.vertx.java.core.http.HttpHeaders.TRANSFER_ENCODING);
     if (!raw) {
-      if (!headers.contains(HttpHeaders.Names.HOST)) {
-        request.headers().set(HttpHeaders.Names.HOST, conn.hostHeader);
+      if (!headers.contains(org.vertx.java.core.http.HttpHeaders.HOST)) {
+        request.headers().set(org.vertx.java.core.http.HttpHeaders.HOST, conn.hostHeader);
       }
       if (chunked) {
         HttpHeaders.setTransferEncodingChunked(request);
       }
+    }
+    if (client.getTryUseCompression() && request.headers().get(org.vertx.java.core.http.HttpHeaders.ACCEPT_ENCODING) == null) {
+      // if compression should be used but nothing is specified by the user support deflate and gzip.
+      request.headers().set(org.vertx.java.core.http.HttpHeaders.ACCEPT_ENCODING, org.vertx.java.core.http.HttpHeaders.DEFLATE_GZIP);
+
     }
   }
 
@@ -465,7 +475,7 @@ public class DefaultHttpClientRequest implements HttpClientRequest {
 
   private void writeEndChunk(ByteBuf buf) {
     if (buf.isReadable()) {
-      conn.write(new DefaultLastHttpContent(buf));
+      conn.write(new DefaultLastHttpContent(buf, false));
     } else {
       conn.write(LastHttpContent.EMPTY_LAST_CONTENT);
     }

@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
@@ -27,11 +27,10 @@ import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.file.impl.PathAdjuster;
 import org.vertx.java.core.http.HttpServerResponse;
+import org.vertx.java.core.impl.DefaultFutureResult;
 import org.vertx.java.core.impl.VertxInternal;
 
 import java.io.File;
-
-import static io.netty.handler.codec.http.HttpHeaders.Names;
 
 /**
  *
@@ -39,15 +38,13 @@ import static io.netty.handler.codec.http.HttpHeaders.Names;
  */
 public class DefaultHttpServerResponse implements HttpServerResponse {
 
+  private static final Buffer NOT_FOUND = new Buffer("<html><body>Resource not found</body><html>");
+
   private final VertxInternal vertx;
   private final ServerConnection conn;
   private final HttpResponse response;
   private final HttpVersion version;
   private final boolean keepAlive;
-
-  private int statusCode = 200;
-  private String statusMessage = "OK";
-
   private boolean headWritten;
   private boolean written;
   private Handler<Void> drainHandler;
@@ -64,9 +61,9 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   	this.vertx = vertx;
   	this.conn = conn;
     this.version = request.getProtocolVersion();
-    this.response = new DefaultHttpResponse(version, HttpResponseStatus.OK);
+    this.response = new DefaultHttpResponse(version, HttpResponseStatus.OK, false);
     this.keepAlive = version == HttpVersion.HTTP_1_1 ||
-        (version == HttpVersion.HTTP_1_0 && "Keep-Alive".equalsIgnoreCase(request.headers().get("Connection")));
+        (version == HttpVersion.HTTP_1_0 && request.headers().contains(org.vertx.java.core.http.HttpHeaders.CONNECTION, org.vertx.java.core.http.HttpHeaders.KEEP_ALIVE, true));
   }
 
   @Override
@@ -81,7 +78,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   public MultiMap trailers() {
     if (trailers == null) {
       if (trailing == null) {
-        trailing = new DefaultLastHttpContent();
+        trailing = new DefaultLastHttpContent(Unpooled.EMPTY_BUFFER, false);
       }
       trailers = new HttpHeadersAdapter(trailing.trailingHeaders());
     }
@@ -90,23 +87,23 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
 
   @Override
   public int getStatusCode() {
-    return statusCode;
+    return response.getStatus().code();
   }
 
   @Override
   public HttpServerResponse setStatusCode(int statusCode) {
-    this.statusCode = statusCode;
+    this.response.setStatus(new HttpResponseStatus(statusCode, response.getStatus().reasonPhrase()));
     return this;
   }
 
   @Override
   public String getStatusMessage() {
-    return statusMessage;
+    return response.getStatus().reasonPhrase();
   }
 
   @Override
   public HttpServerResponse setStatusMessage(String statusMessage) {
-    this.statusMessage = statusMessage;
+    this.response.setStatus(new HttpResponseStatus(response.getStatus().code(), statusMessage));
     return this;
   }
 
@@ -150,6 +147,34 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   public DefaultHttpServerResponse putTrailer(String key, Iterable<String> values) {
     checkWritten();
     trailers().set(key, values);
+    return this;
+  }
+
+  @Override
+  public HttpServerResponse putHeader(CharSequence name, CharSequence value) {
+    checkWritten();
+    headers().set(name, value);
+    return this;
+  }
+
+  @Override
+  public HttpServerResponse putHeader(CharSequence name, Iterable<CharSequence> values) {
+    checkWritten();
+    headers().set(name, values);
+    return this;
+  }
+
+  @Override
+  public HttpServerResponse putTrailer(CharSequence name, CharSequence value) {
+    checkWritten();
+    trailers().set(name, value);
+    return this;
+  }
+
+  @Override
+  public HttpServerResponse putTrailer(CharSequence name, Iterable<CharSequence> value) {
+    checkWritten();
+    trailers().set(name, value);
     return this;
   }
 
@@ -217,7 +242,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   @Override
   public void end(Buffer chunk) {
     if (!chunked && !contentLengthSet()) {
-      headers().set(Names.CONTENT_LENGTH, String.valueOf(chunk.length()));
+      headers().set(org.vertx.java.core.http.HttpHeaders.CONTENT_LENGTH, String.valueOf(chunk.length()));
     }
     ByteBuf buf = chunk.getByteBuf();
     end0(buf);
@@ -267,7 +292,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
         if (trailing != null) {
           content = new AssembledLastHttpContent(data, trailing.trailingHeaders());
         } else {
-          content = new DefaultLastHttpContent(data);
+          content = new DefaultLastHttpContent(data, false);
         }
         channelFuture = conn.write(content);
       }
@@ -279,13 +304,30 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
     written = true;
     conn.responseComplete();
   }
+
   @Override
   public DefaultHttpServerResponse sendFile(String filename) {
-    return sendFile(filename, null);
+    return sendFile(filename, (String)null);
   }
 
   @Override
   public DefaultHttpServerResponse sendFile(String filename, String notFoundResource) {
+    doSendFile(filename, notFoundResource, null);
+    return this;
+  }
+
+  @Override
+  public HttpServerResponse sendFile(String filename, Handler<AsyncResult<Void>> resultHandler) {
+    return sendFile(filename, null, resultHandler);
+  }
+
+  @Override
+  public HttpServerResponse sendFile(String filename, String notFoundFile, Handler<AsyncResult<Void>> resultHandler) {
+    doSendFile(filename, notFoundFile, resultHandler);
+    return this;
+  }
+
+  private void doSendFile(String filename, String notFoundResource, final Handler<AsyncResult<Void>> resultHandler) {
     if (headWritten) {
       throw new IllegalStateException("Head already written");
     }
@@ -293,14 +335,14 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
     File file = new File(PathAdjuster.adjust(vertx, filename));
     if (!file.exists()) {
       if (notFoundResource != null) {
-        statusCode = HttpResponseStatus.NOT_FOUND.code();
-        sendFile(notFoundResource, null);
+        setStatusCode(HttpResponseStatus.NOT_FOUND.code());
+        sendFile(notFoundResource, (String)null, resultHandler);
       } else {
         sendNotFound();
       }
     } else {
       if (!contentLengthSet()) {
-        putHeader(Names.CONTENT_LENGTH, String.valueOf(file.length()));
+        putHeader(org.vertx.java.core.http.HttpHeaders.CONTENT_LENGTH, String.valueOf(file.length()));
       }
       if (!contentTypeSet()) {
         int li = filename.lastIndexOf('.');
@@ -308,7 +350,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
           String ext = filename.substring(li + 1, filename.length());
           String contentType = MimeMapping.getMimeTypeForExtension(ext);
           if (contentType != null) {
-            putHeader(Names.CONTENT_TYPE, contentType);
+            putHeader(org.vertx.java.core.http.HttpHeaders.CONTENT_TYPE, contentType);
           }
         }
       }
@@ -320,26 +362,45 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
       channelFuture = conn.write(LastHttpContent.EMPTY_LAST_CONTENT);
       headWritten = written = true;
 
+      if (resultHandler != null) {
+        channelFuture.addListener(new ChannelFutureListener() {
+          public void operationComplete(ChannelFuture future) throws Exception {
+            final AsyncResult<Void> res;
+            if (future.isSuccess()) {
+              res = new DefaultFutureResult<>((Void)null);
+            } else {
+              res = new DefaultFutureResult<>(future.cause());
+            }
+            vertx.runOnContext(new Handler<Void>() {
+              @Override
+              public void handle(Void v) {
+                resultHandler.handle(res);
+              }
+            });
+          }
+        });
+      }
+
       if (!keepAlive) {
         closeConnAfterWrite();
       }
       conn.responseComplete();
     }
-    return this;
   }
+
 
   private boolean contentLengthSet() {
     if (headers == null) {
       return false;
     }
-    return headers.contains(Names.CONTENT_LENGTH);
+    return response.headers().contains(org.vertx.java.core.http.HttpHeaders.CONTENT_LENGTH);
   }
 
   private boolean contentTypeSet() {
     if (headers == null) {
       return false;
     }
-    return headers.contains(Names.CONTENT_TYPE);
+    return response.headers().contains(org.vertx.java.core.http.HttpHeaders.CONTENT_TYPE);
   }
 
   private void closeConnAfterWrite() {
@@ -353,9 +414,9 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   }
 
   private void sendNotFound() {
-    statusCode = HttpResponseStatus.NOT_FOUND.code();
-    putHeader("content-type", "text/html");
-    end("<html><body>Resource not found</body><html>");
+    setStatusCode(HttpResponseStatus.NOT_FOUND.code());
+    putHeader(org.vertx.java.core.http.HttpHeaders.CONTENT_TYPE, org.vertx.java.core.http.HttpHeaders.TEXT_HTML);
+    end(NOT_FOUND);
   }
 
   void handleDrained() {
@@ -383,23 +444,20 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   }
 
   private void prepareHeaders() {
-    HttpResponseStatus status = statusMessage == null ? HttpResponseStatus.valueOf(statusCode) :
-            new HttpResponseStatus(statusCode, statusMessage);
-    response.setStatus(status);
     if (version == HttpVersion.HTTP_1_0 && keepAlive) {
-      response.headers().set("Connection", "Keep-Alive");
+      response.headers().set(org.vertx.java.core.http.HttpHeaders.CONNECTION, org.vertx.java.core.http.HttpHeaders.KEEP_ALIVE);
     }
     if (chunked) {
-      response.headers().set(Names.TRANSFER_ENCODING, io.netty.handler.codec.http.HttpHeaders.Values.CHUNKED);
+      response.headers().set(org.vertx.java.core.http.HttpHeaders.TRANSFER_ENCODING, org.vertx.java.core.http.HttpHeaders.CHUNKED);
     } else if (version != HttpVersion.HTTP_1_0 && !contentLengthSet()) {
-      response.headers().set(Names.CONTENT_LENGTH, "0");
+      response.headers().set(org.vertx.java.core.http.HttpHeaders.CONTENT_LENGTH, "0");
     }
   }
 
 
   private DefaultHttpServerResponse write(ByteBuf chunk, final Handler<AsyncResult<Void>> doneHandler) {
     checkWritten();
-    if (version != HttpVersion.HTTP_1_0 && !chunked && !contentLengthSet()) {
+    if (!headWritten && version != HttpVersion.HTTP_1_0 && !chunked && !contentLengthSet()) {
       throw new IllegalStateException("You must set the Content-Length header to be the total size of the message "
                                               + "body BEFORE sending any data if you are not using HTTP chunked encoding.");
     }

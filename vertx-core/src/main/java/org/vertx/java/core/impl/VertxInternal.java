@@ -1,39 +1,40 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.impl;
 
 
 import io.netty.channel.EventLoopGroup;
-import org.vertx.java.core.Vertx;
 import org.vertx.java.core.http.impl.DefaultHttpServer;
 import org.vertx.java.core.net.impl.DefaultNetServer;
 import org.vertx.java.core.net.impl.ServerID;
+import org.vertx.java.core.spi.VertxSPI;
+import org.vertx.java.core.spi.cluster.ClusterManager;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
 /**
- * This class provides services for vert.x core internal use only
+ * This interface provides services for vert.x core internal use only
  * It is not part of the public API and should not be used by
  * developers creating vert.x applications
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public interface VertxInternal extends Vertx {
+public interface VertxInternal extends VertxSPI {
 
   EventLoopGroup getEventLoopGroup();
 
@@ -66,4 +67,6 @@ public interface VertxInternal extends Vertx {
    * @return event loop context
    */
   EventLoopContext createEventLoopContext();
+
+  ClusterManager clusterManager();
 }

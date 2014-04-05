@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
+ *
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
+ *
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
+ *
+ * You may elect to redistribute this code under either of these licenses.
+ */
+
 package org.vertx.java.platform.impl.resolver;
 
 import org.vertx.java.core.Handler;
@@ -16,6 +32,8 @@ import java.io.BufferedOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -23,23 +41,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
-/*
- * Copyright 2013 Red Hat, Inc.
- *
- * Red Hat licenses this file to you under the Apache License, version 2.0
- * (the "License"); you may not use this file except in compliance with the
- * License.  You may obtain a copy of the License at:
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
- * License for the specific language governing permissions and limitations
- * under the License.
- *
- * @author <a href="http://tfox.org">Tim Fox</a>
- */
 public abstract class HttpResolution {
 
   private static final Logger log = LoggerFactory.getLogger(HttpResolution.class);
@@ -56,11 +57,15 @@ public abstract class HttpResolution {
   private final Vertx vertx;
   protected final String repoHost;
   protected final int repoPort;
+  protected final String repoScheme;
+  protected final String repoPassword;
+  protected final String repoUsername;
   protected final ModuleIdentifier modID;
   protected final String filename;
   protected final String proxyHost = getProxyHost();
   protected final int proxyPort = getProxyPort();
   private final Map<Integer, Handler<HttpClientResponse>> handlers = new HashMap<>();
+
   protected HttpClient client;
 
   private boolean result;
@@ -68,7 +73,7 @@ public abstract class HttpResolution {
   public boolean waitResult() {
     while (true) {
       try {
-        if (!latch.await(300, TimeUnit.SECONDS)) {
+        if (!latch.await(3600, TimeUnit.SECONDS)) {
           throw new IllegalStateException("Timed out waiting to download module");
         }
         break;
@@ -78,19 +83,24 @@ public abstract class HttpResolution {
     return result;
   }
 
-  public HttpResolution(Vertx vertx, String repoHost, int repoPort, ModuleIdentifier modID, String filename) {
+  public HttpResolution(Vertx vertx, String repoScheme, String repoUsername, String repoPassword, String repoHost, int repoPort, ModuleIdentifier modID, String filename) {
     this.vertx = vertx;
     this.repoHost = repoHost;
     this.repoPort = repoPort;
+    this.repoUsername = repoUsername;
+    this.repoPassword = repoPassword;
     this.modID = modID;
     this.filename = filename;
+    this.repoScheme = repoScheme;
   }
 
-  protected HttpClient createClient(String host, int port) {
+  protected HttpClient createClient(String scheme, String host, int port) {
     if (client != null) {
       throw new IllegalStateException("Client already created");
     }
+
     client = vertx.createHttpClient();
+    client.setKeepAlive(false); // Not all servers will allow keep alive connections
     if (proxyHost != null) {
       client.setHost(proxyHost);
       if (proxyPort != 80) {
@@ -102,6 +112,10 @@ public abstract class HttpResolution {
       client.setHost(host);
       client.setPort(port);
     }
+    if (scheme.equals("https")) {
+      client.setSSL(true);
+    }
+
     client.exceptionHandler(new Handler<Throwable>() {
       public void handle(Throwable t) {
         end(false);
@@ -110,11 +124,11 @@ public abstract class HttpResolution {
     return client;
   }
 
-  protected void sendRequest(String host, int port, String uri, Handler<HttpClientResponse> respHandler) {
+  protected void sendRequest(String scheme, String host, int port, String uri, Handler<HttpClientResponse> respHandler) {
     final String proxyHost = getProxyHost();
     if (proxyHost != null) {
       // We use an absolute URI
-      uri = new StringBuilder("http://").append(host).append(":").append(port).append(uri).toString();
+      uri = new StringBuilder().append(scheme).append("://").append(host).append(":").append(port).append(uri).toString();
     }
 
     HttpClientRequest req = client.get(uri, respHandler);
@@ -135,8 +149,8 @@ public abstract class HttpResolution {
 
   protected abstract void getModule();
 
-  protected void makeRequest(String host, int port, String uri) {
-    sendRequest(host, port, uri, new Handler<HttpClientResponse>() {
+  protected void makeRequest(String scheme, String host, int port, String uri) {
+    sendRequest(scheme, host, port, uri, new Handler<HttpClientResponse>() {
       public void handle(HttpClientResponse resp) {
         Handler<HttpClientResponse> handler = handlers.get(resp.statusCode());
         if (handler != null) {
@@ -214,22 +228,67 @@ public abstract class HttpResolution {
     });
   }
 
+  protected void handleRedirect(HttpClientResponse resp) {
+    // follow redirects
+    String location = resp.headers().get("location");
+    if (location == null) {
+      log.error("HTTP redirect with no location header");
+    } else {
+      URI redirectURI;
+      try {
+        redirectURI = new URI(location);
+        client.close();
+        client = null;
+        int redirectPort = redirectURI.getPort();
+        if (redirectPort == -1) {
+          redirectPort = 80;
+        }
+        createClient(redirectURI.getScheme(), redirectURI.getHost(), redirectPort);
+        makeRequest(redirectURI.getScheme(), redirectURI.getHost(), redirectPort, redirectURI.getPath());
+      } catch (URISyntaxException e) {
+        log.error("Invalid redirect URI: " + location);
+      }
+    }
+  }
+
+  protected void addRedirectHandlers() {
+    Handler<HttpClientResponse> handler = new Handler<HttpClientResponse>() {
+      @Override
+      public void handle(HttpClientResponse resp) {
+        handleRedirect(resp);
+      }
+    };
+    addHandler(301, handler);
+    addHandler(302, handler);
+    addHandler(303, handler);
+    addHandler(308, handler);
+  }
+
+
   private static String getProxyHost() {
     return System.getProperty(HTTP_PROXY_HOST_PROP_NAME);
   }
 
-  private static String getBasicAuth() {
-    if ((System.getProperty(HTTP_BASIC_AUTH_USER_PROP_NAME) != null)
-        && (System.getProperty(HTTP_BASIC_AUTH_PASSWORD_PROP_NAME)  != null)) {
-      String authinfo = new StringBuilder(System.getProperty(HTTP_BASIC_AUTH_USER_PROP_NAME))
-          .append(":").append(System.getProperty(HTTP_BASIC_AUTH_PASSWORD_PROP_NAME)).toString();
-      return Base64.encodeBytes(authinfo.getBytes());
+  private String getBasicAuth() {
+    if (repoUsername != null && repoPassword != null) {
+      return autoInfo(repoUsername, repoPassword);
+    } else {
+      String user = System.getProperty(HTTP_BASIC_AUTH_USER_PROP_NAME);
+      if (user != null) {
+        String pass = System.getProperty(HTTP_BASIC_AUTH_PASSWORD_PROP_NAME);
+        if (pass != null) {
+          return autoInfo(user, pass);
+        }
+      }
     }
     return null;
   }
 
-  private static int getProxyPort() {
-    return Integer.valueOf(System.getProperty(HTTP_PROXY_PORT_PROP_NAME, "80"));
+  private String autoInfo(String user, String pass) {
+    return Base64.encodeBytes((user + ":" + pass).getBytes());
   }
 
+  private static int getProxyPort() {
+    return Integer.parseInt(System.getProperty(HTTP_PROXY_PORT_PROP_NAME, "80"));
+  }
 }

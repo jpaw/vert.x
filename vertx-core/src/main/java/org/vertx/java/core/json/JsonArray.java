@@ -1,22 +1,22 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.json;
 
-import org.vertx.java.core.json.impl.Base64;
+import org.vertx.java.core.VertxException;
 import org.vertx.java.core.json.impl.Json;
 
 import java.util.*;
@@ -29,14 +29,18 @@ import java.util.*;
  */
 public class JsonArray extends JsonElement implements Iterable<Object> {
 
-  final List<Object> list;
+  protected List<Object> list;
 
-  public JsonArray(List<Object> array) {
-    this.list = array;
+  public JsonArray(List<Object> list) {
+    this(list, true);
   }
 
   public JsonArray(Object[] array) {
-    this.list = Arrays.asList(array);
+    this(new ArrayList<>(Arrays.asList(array)), true);
+  }
+
+  protected JsonArray(List<Object> list, boolean copy) {
+    this.list = copy ? convertList(list): list;
   }
 
   public JsonArray() {
@@ -53,20 +57,23 @@ public class JsonArray extends JsonElement implements Iterable<Object> {
   }
 
   public JsonArray addObject(JsonObject value) {
-    list.add(value.map);
+    list.add(value == null ? null : value.map);
     return this;
   }
 
   public JsonArray addArray(JsonArray value) {
-    list.add(value.list);
+    list.add(value == null ? null : value.list);
     return this;
   }
 
   public JsonArray addElement(JsonElement value) {
+    if (value == null) {
+      list.add(null);
+      return this;
+    }
     if (value.isArray()) {
       return addArray(value.asArray());
     }
-
     return addObject(value.asObject());
   }
 
@@ -81,18 +88,29 @@ public class JsonArray extends JsonElement implements Iterable<Object> {
   }
 
   public JsonArray addBinary(byte[] value) {
-    String encoded = Base64.encodeBytes(value);
+    String encoded = (value == null) ? null : org.vertx.java.core.json.impl.Base64.encodeBytes(value);
     list.add(encoded);
     return this;
   }
 
-  public JsonArray add(Object obj) {
-    if (obj instanceof JsonObject) {
-      obj = ((JsonObject) obj).map;
-    } else if (obj instanceof JsonArray) {
-      obj = ((JsonArray) obj).list;
+  public JsonArray add(Object value) {
+    if (value == null) {
+      list.add(null);
+    } else if (value instanceof JsonObject) {
+      addObject((JsonObject) value);
+    } else if (value instanceof JsonArray) {
+      addArray((JsonArray) value);
+    } else if (value instanceof String) {
+      addString((String) value);
+    } else if (value instanceof Number) {
+      addNumber((Number) value);
+    } else if (value instanceof Boolean) {
+      addBoolean((Boolean)value);
+    } else if (value instanceof byte[]) {
+      addBinary((byte[])value);
+    } else {
+      throw new VertxException("Cannot add objects of class " + value.getClass() +" to JsonArray");
     }
-    list.add(obj);
     return this;
   }
 
@@ -139,8 +157,17 @@ public class JsonArray extends JsonElement implements Iterable<Object> {
     return Json.encodePrettily(this.list);
   }
 
+  /**
+   *
+   * @return a copy of the JsonArray
+   */
   public JsonArray copy() {
-    return new JsonArray(encode());
+    return new JsonArray(list, true);
+  }
+
+  @Override
+  public String toString() {
+    return encode();
   }
 
   @Override
@@ -159,7 +186,11 @@ public class JsonArray extends JsonElement implements Iterable<Object> {
     Iterator<?> iter = that.list.iterator();
     for (Object entry : this.list) {
       Object other = iter.next();
-      if (!entry.equals(other)) {
+      if (entry == null) {
+        if (other != null) {
+          return false;
+        }
+      } else if (!entry.equals(other)) {
         return false;
       }
     }
@@ -170,31 +201,18 @@ public class JsonArray extends JsonElement implements Iterable<Object> {
     return convertList(list).toArray();
   }
 
-  @SuppressWarnings("unchecked")
-  static List<Object> convertList(List<?> list) {
-    List<Object> arr = new ArrayList<>(list.size());
-    for (Object obj : list) {
-      if (obj instanceof Map) {
-        arr.add(JsonObject.convertMap((Map<String, Object>) obj));
-      } else if (obj instanceof JsonObject) {
-        arr.add(((JsonObject) obj).toMap());
-      } else if (obj instanceof List) {
-        arr.add(convertList((List<?>) obj));
-      } else {
-        arr.add(obj);
-      }
-    }
-    return arr;
+  public List toList() {
+    return convertList(list);
   }
 
   @SuppressWarnings("unchecked")
-  private static <T> T convertObject(final Object obj) {
+  private <T> T convertObject(final Object obj) {
     Object retVal = obj;
     if (obj != null) {
       if (obj instanceof List) {
-        retVal = new JsonArray((List<Object>) obj);
+        retVal = new JsonArray((List<Object>) obj, false);
       } else if (obj instanceof Map) {
-        retVal = new JsonObject((Map<String, Object>) obj);
+        retVal = new JsonObject((Map<String, Object>) obj, false);
       }
     }
     return (T)retVal;

@@ -1,29 +1,27 @@
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
+ *
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
+ *
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
+ *
+ * You may elect to redistribute this code under either of these licenses.
+ */
+
 package org.vertx.java.core.file.impl;
 
 import org.vertx.java.core.VertxException;
 
-import java.io.File;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-
-/*
- * Copyright 2013 Red Hat, Inc.
- *
- * Red Hat licenses this file to you under the Apache License, version 2.0
- * (the "License"); you may not use this file except in compliance with the
- * License.  You may obtain a copy of the License at:
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
- * License for the specific language governing permissions and limitations
- * under the License.
- *
- */
 
 /**
  *
@@ -38,37 +36,51 @@ public class ClasspathPathResolver implements PathResolver {
 
   private static final char FILE_SEP = System.getProperty("file.separator").charAt(0);
 
-  @Override
-  public Path resolve(Path path) {
+  public static Path resolvePath(Path path) {
     ClassLoader cl = Thread.currentThread().getContextClassLoader();
     if (cl != null) {
       String spath = path.toString();
       String substituted = FILE_SEP == '/' ? spath : spath.replace(FILE_SEP, '/');
       URL url = cl.getResource(substituted);
       if (url != null) {
-        if (FILE_SEP == '/') {
-          // *nix - a bit quicker than pissing around with URIs
-          String sfile = url.getFile();
-          if (sfile != null) {
-            return Paths.get(url.getFile());
-          }
-        } else {
-          // E.g. windows
-          // See http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4701321
-
-          try {
-              URI uri = url.toURI();
-              if (uri.isOpaque()) {
-                return Paths.get(url.getPath());
-              } else {
-                return Paths.get(uri);
-              }
-          } catch (Exception exc) {
-            throw new VertxException(exc);
-          }
+        Path thePath = urlToPath(url);
+        if (thePath != null) {
+          return thePath;
         }
       }
     }
     return path;
+  }
+
+  public static Path urlToPath(URL url) {
+    if (FILE_SEP == '/') {
+      // *nix - a bit quicker than pissing around with URIs
+      String sfile = url.getFile();
+      if (sfile != null) {
+        return Paths.get(url.getFile());
+      } else {
+        return null;
+      }
+    } else {
+      // E.g. windows
+      // See http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4701321
+
+      try {
+        URI uri = url.toURI();
+        if (uri.isOpaque()) {
+          return Paths.get(url.getPath());
+        } else {
+          return Paths.get(uri);
+        }
+      } catch (Exception exc) {
+        throw new VertxException(exc);
+      }
+    }
+  }
+
+
+  @Override
+  public Path resolve(Path path) {
+    return resolvePath(path);
   }
 }

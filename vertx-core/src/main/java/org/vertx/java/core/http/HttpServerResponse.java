@@ -1,21 +1,22 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http;
 
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.buffer.Buffer;
@@ -94,6 +95,7 @@ public interface HttpServerResponse extends WriteStream<HttpServerResponse> {
    * @return A reference to this, so multiple method calls can be chained.
    */
   HttpServerResponse putHeader(String name, String value);
+  HttpServerResponse putHeader(CharSequence name, CharSequence value);
 
   /**
    * Put an HTTP header - fluent API
@@ -102,6 +104,7 @@ public interface HttpServerResponse extends WriteStream<HttpServerResponse> {
    * @return A reference to this, so multiple method calls can be chained.
    */
   HttpServerResponse putHeader(String name, Iterable<String> values);
+  HttpServerResponse putHeader(CharSequence name, Iterable<CharSequence> values);
 
 
   /**
@@ -116,6 +119,7 @@ public interface HttpServerResponse extends WriteStream<HttpServerResponse> {
    * @return A reference to this, so multiple method calls can be chained.
    */
   HttpServerResponse putTrailer(String name, String value);
+  HttpServerResponse putTrailer(CharSequence name, CharSequence value);
 
   /**
    * Put an HTTP trailer - fluent API
@@ -124,6 +128,7 @@ public interface HttpServerResponse extends WriteStream<HttpServerResponse> {
    * @return A reference to this, so multiple method calls can be chained.
    */
   HttpServerResponse putTrailer(String name, Iterable<String> values);
+  HttpServerResponse putTrailer(CharSequence name, Iterable<CharSequence> value);
 
   /**
    * Set a close handler for the response. This will be called if the underlying connection closes before the response
@@ -188,6 +193,18 @@ public interface HttpServerResponse extends WriteStream<HttpServerResponse> {
    * Same as {@link #sendFile(String)} but also takes the path to a resource to serve if the resource is not found
    */
   HttpServerResponse sendFile(String filename, String notFoundFile);
+
+  /**
+   * Same as {@link #sendFile(String)} but also takes a handler that will be called when the send has completed or
+   * a failure has occurred
+   */
+  HttpServerResponse sendFile(String filename, Handler<AsyncResult<Void>> resultHandler);
+
+  /**
+   * Same as {@link #sendFile(String, String)} but also takes a handler that will be called when the send has completed or
+   * a failure has occurred
+   */
+  HttpServerResponse sendFile(String filename, String notFoundFile, Handler<AsyncResult<Void>> resultHandler);
 
   /**
    * Close the underlying TCP connection

@@ -1,21 +1,22 @@
 /*
- * Copyright 2013 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 package org.vertx.java.core.net.impl;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
@@ -41,14 +42,14 @@ public abstract class VertxHandler<C extends ConnectionBase> extends ChannelDupl
     return connection.getContext();
   }
 
-  protected static ByteBuf safeBuffer(ByteBuf buf) {
+  protected static ByteBuf safeBuffer(ByteBuf buf, ByteBufAllocator allocator) {
     if (buf == Unpooled.EMPTY_BUFFER) {
       return buf;
     }
     if (buf.isDirect() || buf instanceof CompositeByteBuf) {
       try {
         if (buf.isReadable()) {
-          ByteBuf buffer =  buf.alloc().heapBuffer(buf.readableBytes());
+          ByteBuf buffer =  allocator.heapBuffer(buf.readableBytes());
           buffer.writeBytes(buf);
           return buffer;
         } else {
@@ -127,7 +128,6 @@ public abstract class VertxHandler<C extends ConnectionBase> extends ChannelDupl
   public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
     C conn = connectionMap.get(ctx.channel());
     if (conn != null) {
-      conn.endReadAndFlush();
       DefaultContext context = getContext(conn);
       // Only mark end read if its not a WorkerVerticle
       if (context.isOnCorrectWorker(ctx.channel().eventLoop())) {
@@ -138,7 +138,7 @@ public abstract class VertxHandler<C extends ConnectionBase> extends ChannelDupl
 
   @Override
   public void channelRead(ChannelHandlerContext chctx, Object msg) throws Exception {
-    final Object message = safeObject(msg);
+    final Object message = safeObject(msg, chctx.alloc());
     final C connection = connectionMap.get(chctx.channel());
 
     DefaultContext context;
@@ -158,5 +158,5 @@ public abstract class VertxHandler<C extends ConnectionBase> extends ChannelDupl
 
   protected abstract void channelRead(C connection, DefaultContext context, ChannelHandlerContext chctx, Object msg) throws Exception;
 
-  protected abstract Object safeObject(Object msg) throws Exception;
+  protected abstract Object safeObject(Object msg, ByteBufAllocator allocator) throws Exception;
 }

@@ -1,21 +1,20 @@
-package org.vertx.java.platform;
 /*
- * Copyright 2013 Red Hat, Inc.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Red Hat licenses this file to you under the Apache License, version 2.0
- * (the "License"); you may not use this file except in compliance with the
- * License.  You may obtain a copy of the License at:
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
- * License for the specific language governing permissions and limitations
- * under the License.
- *
- * @author <a href="http://tfox.org">Tim Fox</a>
+ * You may elect to redistribute this code under either of these licenses.
  */
+
+package org.vertx.java.platform;
 
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
@@ -81,6 +80,19 @@ public interface PlatformManager {
                     int instances, Handler<AsyncResult<String>> doneHandler);
 
   /**
+   * Deploy a module
+   * @param moduleName The name of the module to deploy
+   * @param config Any JSON config to pass to the verticle, or null if none
+   * @param instances The number of instances to deploy
+   * @param ha If true then the module is enabled for ha and will failover to any other vert.x instances
+   *           with the same group in the cluster
+   * @param doneHandler Handler will be called with deploymentID when deployed, or null if it fails to deploy
+   */
+  void deployModule(String moduleName, JsonObject config,
+                    int instances,
+                    boolean ha, Handler<AsyncResult<String>> doneHandler);
+
+  /**
    * Deploy a module from a zip file.
    * The zip must contain a valid Vert.x module. Vert.x will automatically install the module from the zip into the
    * local mods dir or the system mods dir (if it's a system module), or VERTX_MODS if set, and then deploy the
@@ -144,6 +156,19 @@ public interface PlatformManager {
    * @param moduleName The name of the module
    */
   void pullInDependencies(String moduleName, Handler<AsyncResult<Void>> doneHandler);
+
+
+  /**
+   * Create a fat executable jar which includes the Vert.x binaries and the module so it can be run
+   * directly with java without having to pre-install Vert.x. e.g.:
+   * java -jar mymod~1.0-fat.jar
+   * @param moduleName The name of the module to create the fat jar for
+   * @param outputDirectory Directory in which to place the jar
+   * @param doneHandler Handler that will be called on completion
+   */
+  void makeFatJar(String moduleName, String outputDirectory, Handler<AsyncResult<Void>> doneHandler);
+
+  void createModuleLink(String moduleName, Handler<AsyncResult<Void>> doneHandler);
 
   /**
    * Register a handler that will be called when the platform exits because of a verticle calling container.exit()

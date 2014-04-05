@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
+ *
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
+ *
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
+ *
+ * You may elect to redistribute this code under either of these licenses.
+ */
+
 package org.vertx.java.platform.impl;
 
 import org.vertx.java.core.Handler;
@@ -7,34 +23,14 @@ import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.io.File;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
-/*
- * Copyright 2013 Red Hat, Inc.
- *
- * Red Hat licenses this file to you under the Apache License, version 2.0
- * (the "License"); you may not use this file except in compliance with the
- * License.  You may obtain a copy of the License at:
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
- * License for the specific language governing permissions and limitations
- * under the License.
- *
- * @author <a href="http://tfox.org">Tim Fox</a>
- */
 public class Redeployer {
 
   private static final Logger log = LoggerFactory.getLogger(Redeployer.class);
 
   private static final long CHECK_PERIOD = 240;
-  private static final long GRACE_PERIOD = 500;
+  private static final long GRACE_PERIOD = 1000;
 
   private final VertxInternal vertx;
   private final ModuleReloader reloader;
@@ -46,6 +42,7 @@ public class Redeployer {
 
   private long timerID;
   private boolean closed;
+  private boolean scannerStarted;
 
   private Runnable checker = new Runnable() {
     public void run() {
@@ -70,7 +67,6 @@ public class Redeployer {
   public Redeployer(VertxInternal vertx, ModuleReloader reloader) {
     this.vertx = vertx;
     this.reloader = reloader;
-    setTimer();
   }
 
   private void setTimer() {
@@ -83,6 +79,7 @@ public class Redeployer {
 
   public synchronized void close() {
     vertx.cancelTimer(timerID);
+    scannerStarted = false;
     closed = true;
   }
 
@@ -91,7 +88,13 @@ public class Redeployer {
     Set<Deployment> deps = deployments.get(deployment.modID);
     if (deps == null) {
       Set<File> watched = new HashSet<>();
-      for (URL url: deployment.classpath) {
+      List<URL> totCP = new ArrayList<>();
+      // We need to watch not only the classpath of the modules but also the cp of any modules that it includes
+      Collections.addAll(totCP, deployment.classpath);
+      if (deployment.includedClasspath != null) {
+        Collections.addAll(totCP, deployment.includedClasspath);
+      }
+      for (URL url: totCP) {
         String sfile = url.getFile();
         if (sfile != null) {
           File file = new File(sfile);
@@ -105,6 +108,10 @@ public class Redeployer {
       deployments.put(deployment.modID, deps);
     }
     deps.add(deployment);
+    if (!scannerStarted) {
+      setTimer();
+      scannerStarted = true;
+    }
   }
 
   private void addDirectory(Set<File> dirs, File directory) {

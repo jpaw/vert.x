@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
@@ -19,10 +19,7 @@ package org.vertx.java.core.http.impl;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.http.HttpClientCodec;
-import io.netty.handler.codec.http.HttpContent;
-import io.netty.handler.codec.http.HttpResponse;
-import io.netty.handler.codec.http.LastHttpContent;
+import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
@@ -34,7 +31,11 @@ import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.*;
 import org.vertx.java.core.http.impl.ws.DefaultWebSocketFrame;
 import org.vertx.java.core.http.impl.ws.WebSocketFrame;
-import org.vertx.java.core.impl.*;
+import org.vertx.java.core.impl.Closeable;
+import org.vertx.java.core.impl.DefaultContext;
+import org.vertx.java.core.impl.DefaultFutureResult;
+import org.vertx.java.core.impl.VertxInternal;
+import org.vertx.java.core.net.NetSocket;
 import org.vertx.java.core.net.impl.TCPSSLHelper;
 import org.vertx.java.core.net.impl.VertxEventLoopGroup;
 
@@ -42,22 +43,24 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLParameters;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class DefaultHttpClient implements HttpClient {
 
-  private static final ExceptionDispatchHandler EXCEPTION_DISPATCH_HANDLER = new ExceptionDispatchHandler();
-
   final VertxInternal vertx;
   final Map<Channel, ClientConnection> connectionMap = new ConcurrentHashMap<>();
 
   private final DefaultContext actualCtx;
-  private final TCPSSLHelper tcpHelper = new TCPSSLHelper();
+  final TCPSSLHelper tcpHelper = new TCPSSLHelper();
   private Bootstrap bootstrap;
   private Handler<Throwable> exceptionHandler;
   private int port = 80;
   private String host = "localhost";
+  private boolean tryUseCompression;
+  private int maxWebSocketFrameSize = 65536;
+
   private final HttpPool pool = new PriorityHttpConnectionPool()  {
     protected void connect(Handler<ClientConnection> connectHandler, Handler<Throwable> connectErrorHandler, DefaultContext context) {
       internalConnect(connectHandler, connectErrorHandler);
@@ -164,7 +167,7 @@ public class DefaultHttpClient implements HttpClient {
     getConnection(new Handler<ClientConnection>() {
       public void handle(final ClientConnection conn) {
         if (!conn.isClosed()) {
-          conn.toWebSocket(uri, wsVersion, headers, wsConnect);
+          conn.toWebSocket(uri, wsVersion, headers, maxWebSocketFrameSize, wsConnect);
         } else {
           connectWebsocket(uri, wsVersion, headers, wsConnect);
         }
@@ -234,9 +237,109 @@ public class DefaultHttpClient implements HttpClient {
   }
 
   @Override
-  public HttpClientRequest connect(String uri, Handler<HttpClientResponse> responseHandler) {
+  public HttpClientRequest connect(String uri, final Handler<HttpClientResponse> responseHandler) {
     checkClosed();
-    return doRequest("CONNECT", uri, responseHandler);
+    return doRequest("CONNECT", uri, connectHandler(responseHandler));
+  }
+
+  private Handler<HttpClientResponse> connectHandler(final Handler<HttpClientResponse> responseHandler) {
+    return new Handler<HttpClientResponse>() {
+      @Override
+      public void handle(final HttpClientResponse event) {
+        HttpClientResponse response;
+        if (event.statusCode() == 200) {
+          // connect successful force the modification of the ChannelPipeline
+          // beside this also pause the socket for now so the user has a chance to register its dataHandler
+          // after received the NetSocket
+          final NetSocket socket = event.netSocket();
+          socket.pause();
+
+          response = new HttpClientResponse() {
+            private boolean resumed;
+
+            @Override
+            public int statusCode() {
+              return event.statusCode();
+            }
+
+            @Override
+            public String statusMessage() {
+              return event.statusMessage();
+            }
+
+            @Override
+            public MultiMap headers() {
+              return event.headers();
+            }
+
+            @Override
+            public MultiMap trailers() {
+              return event.trailers();
+            }
+
+            @Override
+            public List<String> cookies() {
+              return event.cookies();
+            }
+
+            @Override
+            public HttpClientResponse bodyHandler(Handler<Buffer> bodyHandler) {
+              event.bodyHandler(bodyHandler);
+              return this;
+            }
+
+            @Override
+            public NetSocket netSocket() {
+              if (!resumed) {
+                resumed = true;
+                vertx.getContext().execute(new Runnable() {
+                  @Override
+                  public void run() {
+                    // resume the socket now as the user had the chance to register a dataHandler
+                    socket.resume();
+                  }
+                });
+              }
+              return socket;
+
+            }
+
+            @Override
+            public HttpClientResponse endHandler(Handler<Void> endHandler) {
+              event.endHandler(endHandler);
+              return this;
+            }
+
+            @Override
+            public HttpClientResponse dataHandler(Handler<Buffer> handler) {
+              event.dataHandler(handler);
+              return this;
+            }
+
+            @Override
+            public HttpClientResponse pause() {
+              event.pause();
+              return this;
+            }
+
+            @Override
+            public HttpClientResponse resume() {
+              event.resume();
+              return this;
+            }
+
+            @Override
+            public HttpClientResponse exceptionHandler(Handler<Throwable> handler) {
+              event.exceptionHandler(handler);
+              return this;
+            }
+          };
+        } else {
+          response = event;
+        }
+        responseHandler.handle(response);
+      }
+    };
   }
 
   @Override
@@ -248,6 +351,10 @@ public class DefaultHttpClient implements HttpClient {
   @Override
   public HttpClientRequest request(String method, String uri, Handler<HttpClientResponse> responseHandler) {
     checkClosed();
+    if (method.equalsIgnoreCase("CONNECT")) {
+      // special handling for CONNECT
+      responseHandler = connectHandler(responseHandler);
+    }
     return doRequest(method, uri, responseHandler);
   }
 
@@ -486,6 +593,29 @@ public class DefaultHttpClient implements HttpClient {
     return tcpHelper.isUsePooledBuffers();
   }
 
+  @Override
+  public HttpClient setTryUseCompression(boolean tryUseCompression) {
+    checkClosed();
+    this.tryUseCompression = tryUseCompression;
+    return this;
+  }
+
+  @Override
+  public boolean getTryUseCompression() {
+    return tryUseCompression;
+  }
+
+  @Override
+  public HttpClient setMaxWebSocketFrameSize(int maxSize) {
+    maxWebSocketFrameSize = maxSize;
+    return this;
+  }
+
+  @Override
+  public int getMaxWebSocketFrameSize() {
+    return maxWebSocketFrameSize;
+  }
+
   void getConnection(Handler<ClientConnection> handler, Handler<Throwable> connectionExceptionHandler, DefaultContext context) {
     pool.getConnection(handler, connectionExceptionHandler, context);
   }
@@ -510,7 +640,6 @@ public class DefaultHttpClient implements HttpClient {
   }
 
   void internalConnect(final Handler<ClientConnection> connectHandler, final Handler<Throwable> connectErrorHandler) {
-
     if (bootstrap == null) {
       // Share the event loop thread to also serve the HttpClient's network traffic.
       VertxEventLoopGroup pool = new VertxEventLoopGroup();
@@ -524,8 +653,6 @@ public class DefaultHttpClient implements HttpClient {
         @Override
         protected void initChannel(Channel ch) throws Exception {
           ChannelPipeline pipeline = ch.pipeline();
-          pipeline.addLast("exceptionDispatcher", EXCEPTION_DISPATCH_HANDLER);
-
           if (tcpHelper.isSSL()) {
             SSLEngine engine = tcpHelper.getSSLContext().createSSLEngine(host, port);
             if (tcpHelper.isVerifyHost()) {
@@ -537,7 +664,10 @@ public class DefaultHttpClient implements HttpClient {
             pipeline.addLast("ssl", new SslHandler(engine));
           }
 
-          pipeline.addLast("codec", new HttpClientCodec());
+          pipeline.addLast("codec", new HttpClientCodec(4096, 8192, 8192, false, false));
+          if (tryUseCompression) {
+            pipeline.addLast("inflater", new HttpContentDecompressor(true));
+          }
           pipeline.addLast("handler", new ClientHandler());
         }
       });
@@ -560,7 +690,7 @@ public class DefaultHttpClient implements HttpClient {
                 if (future.isSuccess()) {
                   connected(ch, connectHandler);
                 } else {
-                  failed(ch, connectErrorHandler, new SSLHandshakeException("Failed to create SSL connection"));
+                  connectionFailed(ch, connectErrorHandler, new SSLHandshakeException("Failed to create SSL connection"));
                 }
               }
             });
@@ -568,7 +698,7 @@ public class DefaultHttpClient implements HttpClient {
             connected(ch, connectHandler);
           }
         } else {
-          failed(ch, connectErrorHandler, channelFuture.cause());
+          connectionFailed(ch, connectErrorHandler, channelFuture.cause());
         }
       }
     });
@@ -607,21 +737,21 @@ public class DefaultHttpClient implements HttpClient {
         // The connection has been closed - tell the pool about it, this allows the pool to create more
         // connections. Note the pool doesn't actually remove the connection, when the next person to get a connection
         // gets the closed on, they will check if it's closed and if so get another one.
-        pool.connectionClosed();
+        pool.connectionClosed(conn);
       }
     });
     connectionMap.put(ch, conn);
     connectHandler.handle(conn);
   }
 
-  private void failed(final Channel ch, final Handler<Throwable> connectionExceptionHandler,
-                      final Throwable t) {
+  private void connectionFailed(final Channel ch, final Handler<Throwable> connectionExceptionHandler,
+                                final Throwable t) {
     // If no specific exception handler is provided, fall back to the HttpClient's exception handler.
     final Handler<Throwable> exHandler = connectionExceptionHandler == null ? exceptionHandler : connectionExceptionHandler;
 
     actualCtx.execute(ch.eventLoop(), new Runnable() {
       public void run() {
-        pool.connectionClosed();
+        pool.connectionClosed(null);
         try {
           ch.close();
         } catch (Exception ignore) {
@@ -649,7 +779,7 @@ public class DefaultHttpClient implements HttpClient {
 
     @Override
     protected void doMessageReceived(ClientConnection conn, ChannelHandlerContext ctx, Object msg) {
-      if (conn == null || conn.isClosed()) {
+      if (conn == null) {
         return;
       }
       boolean valid = false;

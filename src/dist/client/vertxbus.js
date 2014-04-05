@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ *   Copyright (c) 2011-2013 The original author or authors
+ *   ------------------------------------------------------
+ *   All rights reserved. This program and the accompanying materials
+ *   are made available under the terms of the Eclipse Public License v1.0
+ *   and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *       The Eclipse Public License is available at
+ *       http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *       The Apache License v2.0 is available at
+ *       http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *   You may elect to redistribute this code under either of these licenses.
  */
 
 var vertx = vertx || {};
@@ -37,6 +37,13 @@ var vertx = vertx || {};
     var state = vertx.EventBus.CONNECTING;
     var sessionID = null;
     var pingTimerID = null;
+    var pingInterval = null;
+    if (options) {
+      pingInterval = options['vertxbus_ping_interval'];
+    }
+    if (!pingInterval) {
+      pingInterval = 5000;
+    }
   
     that.onopen = null;
     that.onclose = null;
@@ -57,8 +64,8 @@ var vertx = vertx || {};
       sendOrPub("send", address, message, replyHandler)
     }
   
-    that.publish = function(address, message, replyHandler) {
-      sendOrPub("publish", address, message, replyHandler)
+    that.publish = function(address, message) {
+      sendOrPub("publish", address, message, null)
     }
   
     that.registerHandler = function(address, handler) {
@@ -99,7 +106,6 @@ var vertx = vertx || {};
   
     that.close = function() {
       checkOpen();
-      if (pingTimerID) clearInterval(pingTimerID);
       state = vertx.EventBus.CLOSING;
       sockJSConn.close();
     }
@@ -109,9 +115,9 @@ var vertx = vertx || {};
     }
   
     sockJSConn.onopen = function() {
-      // Send the first ping then send a ping every 5 seconds
+      // Send the first ping then send a ping every pingInterval milliseconds
       sendPing();
-      pingTimerID = setInterval(sendPing, 5000);
+      pingTimerID = setInterval(sendPing, pingInterval);
       state = vertx.EventBus.OPEN;
       if (that.onopen) {
         that.onopen();
@@ -120,6 +126,7 @@ var vertx = vertx || {};
   
     sockJSConn.onclose = function() {
       state = vertx.EventBus.CLOSED;
+      if (pingTimerID) clearInterval(pingTimerID);
       if (that.onclose) {
         that.onclose();
       }

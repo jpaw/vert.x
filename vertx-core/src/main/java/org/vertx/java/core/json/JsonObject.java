@@ -1,21 +1,23 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.json;
 
+
+import org.vertx.java.core.VertxException;
 import org.vertx.java.core.json.impl.Base64;
 import org.vertx.java.core.json.impl.Json;
 
@@ -28,20 +30,19 @@ import java.util.Set;
  * 
  * Represents a JSON object.<p>
  * Instances of this class are not thread-safe.<p>
- * 
+ *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public class JsonObject extends JsonElement {
 
-  final Map<String, Object> map;
+  protected Map<String, Object> map;
 
   /**
    * Create a JSON object based on the specified Map
-   * 
    * @param map
    */
   public JsonObject(Map<String, Object> map) {
-    this.map = map;
+    this(map, true);
   }
 
   /**
@@ -50,6 +51,11 @@ public class JsonObject extends JsonElement {
   public JsonObject() {
     this.map = new LinkedHashMap<>();
   }
+
+  protected JsonObject(Map<String, Object> map, boolean copy) {
+    this.map = copy ? convertMap(map) : map;
+  }
+
 
   /**
    * Create a JSON object from a string form of a JSON object
@@ -72,16 +78,19 @@ public class JsonObject extends JsonElement {
   }
 
   public JsonObject putArray(String fieldName, JsonArray value) {
-    map.put(fieldName, value.list);
+    map.put(fieldName, value == null ? null : value.list);
     return this;
   }
 
   public JsonObject putElement(String fieldName, JsonElement value) {
-    if(value.isArray()){
-      return this.putArray(fieldName, value.asArray());
+    if (value == null) {
+      map.put(fieldName, null);
+      return this;
+    } else if (value.isArray()) {
+      return putArray(fieldName, value.asArray());
+    } else {
+      return putObject(fieldName, value.asObject());
     }
-    
-    return this.putObject(fieldName, value.asObject());
   }
 
   public JsonObject putNumber(String fieldName, Number value) {
@@ -95,17 +104,27 @@ public class JsonObject extends JsonElement {
   }
 
   public JsonObject putBinary(String fieldName, byte[] binary) {
-    map.put(fieldName, Base64.encodeBytes(binary));
+    map.put(fieldName, binary == null ? null : Base64.encodeBytes(binary));
     return this;
   }
 
   public JsonObject putValue(String fieldName, Object value) {
-    if (value instanceof JsonObject) {
+    if (value == null) {
+      putObject(fieldName, null);
+    } else if (value instanceof JsonObject) {
       putObject(fieldName, (JsonObject)value);
     } else if (value instanceof JsonArray) {
       putArray(fieldName, (JsonArray)value);
+    } else if (value instanceof String) {
+      putString(fieldName, (String)value);
+    } else if (value instanceof Number) {
+      putNumber(fieldName, (Number)value);
+    } else if (value instanceof Boolean) {
+      putBoolean(fieldName, (Boolean)value);
+    } else if (value instanceof byte[]) {
+      putBinary(fieldName, (byte[])value);
     } else {
-      map.put(fieldName, value);
+      throw new VertxException("Cannot put objects of class " + value.getClass() +" in JsonObject");
     }
     return this;
   }
@@ -117,17 +136,19 @@ public class JsonObject extends JsonElement {
   @SuppressWarnings("unchecked")
   public JsonObject getObject(String fieldName) {
     Map<String, Object> m = (Map<String, Object>) map.get(fieldName);
-    return m == null ? null : new JsonObject(m);
+    return m == null ? null : new JsonObject(m, false);
   }
 
   @SuppressWarnings("unchecked")
   public JsonArray getArray(String fieldName) {
     List<Object> l = (List<Object>) map.get(fieldName);
-    return l == null ? null : new JsonArray(l);
+    return l == null ? null : new JsonArray(l, false);
   }
 
   public JsonElement getElement(String fieldName) {
     Object element = map.get(fieldName);
+    if (element == null) return null;
+
     if (element instanceof Map<?,?>){
       return getObject(fieldName);
     }
@@ -157,7 +178,7 @@ public class JsonObject extends JsonElement {
 
   public byte[] getBinary(String fieldName) {
     String encoded = (String) map.get(fieldName);
-    return Base64.decode(encoded);
+    return encoded == null ? null : Base64.decode(encoded);
   }
 
   public String getString(String fieldName, String def) {
@@ -211,30 +232,31 @@ public class JsonObject extends JsonElement {
 
   @SuppressWarnings("unchecked")
   public <T> T getValue(String fieldName) {
-    Object obj = map.get(fieldName);
-    if (obj != null) {
-      if (obj instanceof Map) {
-        obj = new JsonObject((Map)obj);
-      } else if (obj instanceof List) {
-        obj = new JsonArray((List)obj);
-      }
-    }
-    return (T)obj;
+    return getField(fieldName);
   }
 
   @SuppressWarnings("unchecked")
   public <T> T getField(String fieldName) {
     Object obj = map.get(fieldName);
     if (obj instanceof Map) {
-      obj = new JsonObject((Map)obj);
+      obj = new JsonObject((Map)obj, false);
     } else if (obj instanceof List) {
-      obj = new JsonArray((List)obj);
+      obj = new JsonArray((List)obj, false);
     }
     return (T)obj;
   }
 
   public Object removeField(String fieldName) {
-    return map.remove(fieldName) != null;
+    return map.remove(fieldName);
+  }
+
+  /**
+    * The containsField() method returns a boolean indicating whether the object has the specified property.
+    * @param fieldName to lookup
+    * @return true if property exist (null value is also considered to exist).
+    */
+  public boolean containsField(String fieldName) {
+    return map.containsKey(fieldName);
   }
 
   public int size() {
@@ -254,8 +276,12 @@ public class JsonObject extends JsonElement {
     return Json.encodePrettily(this.map);
   }
 
+  /**
+   * @return a copy of this JsonObject such that changes in the original are not reflected in the copy, and
+   * vice versa
+   */
   public JsonObject copy() {
-    return new JsonObject(encode());
+    return new JsonObject(map, true);
   }
 
   @Override
@@ -291,26 +317,12 @@ public class JsonObject extends JsonElement {
     return true;
   }
 
+  /**
+   *
+   * @return the underlying Map for this JsonObject
+   */
   public Map<String, Object> toMap() {
     return convertMap(map);
-  }
-
-  @SuppressWarnings("unchecked")
-  static Map<String, Object> convertMap(Map<String, Object> map) {
-    Map<String, Object> converted = new LinkedHashMap<>(map.size());
-    for (Map.Entry<String, Object> entry : map.entrySet()) {
-      Object obj = entry.getValue();
-      if (obj instanceof Map) {
-        Map<String, Object> jm = (Map<String, Object>) obj;
-        converted.put(entry.getKey(), convertMap(jm));
-      } else if (obj instanceof List) {
-        List<Object> list = (List<Object>) obj;
-        converted.put(entry.getKey(), JsonArray.convertList(list));
-      } else {
-        converted.put(entry.getKey(), obj);
-      }
-    }
-    return converted;
   }
 
 }

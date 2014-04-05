@@ -1,8 +1,28 @@
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
+ *
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
+ *
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
+ *
+ * You may elect to redistribute this code under either of these licenses.
+ */
+
 package org.vertx.java.platform.impl;
 
 import io.netty.channel.EventLoopGroup;
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Context;
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.datagram.DatagramSocket;
+import org.vertx.java.core.datagram.InternetProtocolFamily;
+import org.vertx.java.core.dns.DnsClient;
 import org.vertx.java.core.eventbus.EventBus;
 import org.vertx.java.core.file.FileSystem;
 import org.vertx.java.core.http.HttpClient;
@@ -17,27 +37,13 @@ import org.vertx.java.core.net.impl.DefaultNetServer;
 import org.vertx.java.core.net.impl.ServerID;
 import org.vertx.java.core.shareddata.SharedData;
 import org.vertx.java.core.sockjs.SockJSServer;
+import org.vertx.java.core.spi.Action;
+import org.vertx.java.core.spi.cluster.ClusterManager;
 
+import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
-/*
- * Copyright 2013 Red Hat, Inc.
- *
- * Red Hat licenses this file to you under the Apache License, version 2.0
- * (the "License"); you may not use this file except in compliance with the
- * License.  You may obtain a copy of the License at:
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
- * License for the specific language governing permissions and limitations
- * under the License.
- *
- * @author <a href="http://tfox.org">Tim Fox</a>
- */
 public class WrappedVertx implements VertxInternal {
 
   private final VertxInternal vertx;
@@ -131,6 +137,11 @@ public class WrappedVertx implements VertxInternal {
   }
 
   @Override
+  public ClusterManager clusterManager() {
+    return vertx.clusterManager();
+  }
+
+  @Override
   public NetServer createNetServer() {
     return vertx.createNetServer();
   }
@@ -188,5 +199,20 @@ public class WrappedVertx implements VertxInternal {
   @Override
   public Context currentContext() {
     return vertx.currentContext();
+  }
+
+  @Override
+  public DnsClient createDnsClient(InetSocketAddress... dnsServers) {
+    return vertx.createDnsClient(dnsServers);
+  }
+
+  @Override
+  public <T> void executeBlocking(Action<T> action, Handler<AsyncResult<T>> resultHandler) {
+    vertx.executeBlocking(action, resultHandler);
+  }
+
+  @Override
+  public DatagramSocket createDatagramSocket(InternetProtocolFamily family) {
+    return vertx.createDatagramSocket(family);
   }
 }

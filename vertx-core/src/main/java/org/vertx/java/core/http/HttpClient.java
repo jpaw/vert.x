@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http;
@@ -179,6 +179,9 @@ public interface HttpClient extends ClientSSLSupport<HttpClient>, TCPSupport<Htt
   /**
    * This method returns an {@link HttpClientRequest} instance which represents an HTTP CONNECT request with the specified {@code uri}.<p>
    * When an HTTP response is received from the server the {@code responseHandler} is called passing in the response.
+   *
+   * Because of the nature of CONNECT the connection is automatically upgraded to raw TCP if a response code of 200 is received from the
+   * remote peer. In this case you are able to get hold of the raw TCP socket via calling {@link HttpClientResponse#netSocket()}.
    */
   HttpClientRequest connect(String uri, Handler<HttpClientResponse> responseHandler);
 
@@ -225,5 +228,26 @@ public interface HttpClient extends ClientSSLSupport<HttpClient>, TCPSupport<Htt
    * @return The connect timeout in milliseconds
    */
   int getConnectTimeout();
+
+  /**
+   * Set if the {@link HttpClient} should try to use compression.
+   */
+  HttpClient setTryUseCompression(boolean tryUseCompression);
+
+  /**
+   * Returns {@code true} if the {@link HttpClient} should try to use compression.
+   */
+  boolean getTryUseCompression();
+
+  /**
+   * Sets the maximum websocket frame size in bytes. Default is 65536 bytes.
+   * @param maxSize The size in bytes
+   */
+  HttpClient setMaxWebSocketFrameSize(int maxSize);
+
+  /**
+   * Get the  maximum websocket frame size in bytes.
+   */
+  int getMaxWebSocketFrameSize();
 
 }

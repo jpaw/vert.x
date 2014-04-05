@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
@@ -27,8 +27,8 @@ import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.http.HttpClientResponse;
 import org.vertx.java.core.net.NetSocket;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 
@@ -99,9 +99,9 @@ public class DefaultHttpClientResponse implements HttpClientResponse  {
   public List<String> cookies() {
     if (cookies == null) {
       cookies = new ArrayList<>();
-      cookies.addAll(response.headers().getAll("Set-Cookie"));
+      cookies.addAll(response.headers().getAll(org.vertx.java.core.http.HttpHeaders.SET_COOKIE));
       if (trailer != null) {
-        cookies.addAll(trailer.trailingHeaders().getAll("Set-Cookie"));
+        cookies.addAll(trailer.trailingHeaders().getAll(org.vertx.java.core.http.HttpHeaders.SET_COOKIE));
       }
     }
     return cookies;
@@ -142,15 +142,11 @@ public class DefaultHttpClientResponse implements HttpClientResponse  {
 
   @Override
   public HttpClientResponse bodyHandler(final Handler<Buffer> bodyHandler) {
-    final Buffer body = new Buffer();
-    dataHandler(new Handler<Buffer>() {
-      public void handle(Buffer buff) {
-        body.appendBuffer(buff);
-      }
-    });
+    final BodyHandler handler = new BodyHandler();
+    dataHandler(handler);
     endHandler(new VoidHandler() {
       public void handle() {
-        bodyHandler.handle(body);
+        handler.notifyHandler(bodyHandler);
       }
     });
     return this;
@@ -185,7 +181,7 @@ public class DefaultHttpClientResponse implements HttpClientResponse  {
   void handleChunk(Buffer data) {
     if (paused) {
       if (pausedChunks == null) {
-        pausedChunks = new LinkedList<>();
+        pausedChunks = new ArrayDeque<>();
       }
       pausedChunks.add(data);
     } else {
@@ -221,5 +217,28 @@ public class DefaultHttpClientResponse implements HttpClientResponse  {
       netSocket = conn.createNetSocket();
     }
     return netSocket;
+  }
+
+
+  private final class BodyHandler implements Handler<Buffer> {
+    private Buffer body;
+
+    @Override
+    public void handle(Buffer event) {
+      body().appendBuffer(event);
+    }
+
+    private Buffer body() {
+      if (body == null) {
+        body = new Buffer();
+      }
+      return body;
+    }
+
+    void notifyHandler(Handler<Buffer> bodyHandler) {
+      bodyHandler.handle(body());
+      // reset body so it can get GC'ed
+      body = null;
+    }
   }
 }

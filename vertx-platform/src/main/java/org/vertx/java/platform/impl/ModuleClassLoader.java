@@ -1,6 +1,24 @@
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
+ *
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
+ *
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
+ *
+ * You may elect to redistribute this code under either of these licenses.
+ */
+
 package org.vertx.java.platform.impl;
 
 import org.vertx.java.core.impl.ConcurrentHashSet;
+import org.vertx.java.core.logging.Logger;
+import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -11,212 +29,180 @@ import java.util.*;
 /**
  * Each module (not module instance) is assigned it's own ModuleClassLoader.
  *
- * A ModuleClassLoader can have multiple parents, this always includes the class loader of the module that deployed it
- * (or null if is a top level module), plus the class loaders of any modules that this module includes.
+ * A ModuleClassLoader instance can reference zero or more other ModuleClassLoader instances.
  *
- * This class loader always tries to the load the class itself. If it can't find the class it iterates
- * through its parents trying to load the class. If none of the parents can find it, the platform class loader classloader is tried.
+ * A ModuleClassLoader instance references another ModuleClassLoader instance if it deploys it or includes it.
  *
- * When locating resources this class loader always looks for the resources itself, then it asks the parents to look,
- * and finally the platform class loader classloader is asked.
+ * For each ModuleClassLoader there is a set of ModuleClassLoader instances obtained by walking through the
+ * references graph recursively and avoiding loops. This is obtained with the method {@link #getModuleGraph()}
+ *
+ * For each context the Thread context classloader is set to the ModuleClassLoader that created the context.
+ *
+ * Consequently any class or resource loading that occurs from the same context will have the same set of modules
+ * visible to it, which will be the same as the set of modules visible to the ModuleClassLoader of the module that
+ * created it.
+ *
+ * We support two different load orders for modules - either loading with the platform loader first or
+ * loading with the module classloader first. This is configurable using the load-from-module-first module
+ * field.
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public class ModuleClassLoader extends URLClassLoader {
 
-  // When loading resources or classes we need to catch any circular dependencies
-  private static ThreadLocal<Set<ModuleClassLoader>> circDepTL = new ThreadLocal<>();
-  // And we need to keep track of the recurse depth so we know when we can remove the thread local
-  private static ThreadLocal<Integer> recurseDepth = new ThreadLocal<>();
+  private static final Logger log = LoggerFactory.getLogger(ModuleClassLoader.class);
 
-  private final Set<ModuleReference> parents = new ConcurrentHashSet<>();
+  public final String modID;
+  private final Set<ModuleReference> references = new ConcurrentHashSet<>();
   private final ClassLoader platformClassLoader;
-  private boolean loadResourcesFromTCCL = false;
+  private final boolean loadFromModuleFirst;
+  private Set<ModuleClassLoader> modGraph;
 
-  public ModuleClassLoader(ClassLoader platformClassLoader, URL[] classpath, boolean loadResourcesFromTCCL) {
+  public ModuleClassLoader(String modID, ClassLoader platformClassLoader, URL[] classpath,
+                           boolean loadFromModuleFirst) {
     super(classpath);
+    this.modID = modID;
     this.platformClassLoader = platformClassLoader;
-    this.loadResourcesFromTCCL = loadResourcesFromTCCL;
+    this.loadFromModuleFirst = loadFromModuleFirst;
   }
 
-  public synchronized void addParent(ModuleReference parent) {
-    parents.add(parent);
+  public synchronized boolean addReference(ModuleReference reference) {
+    if (!references.contains(reference)) {
+      references.add(reference);
+      modGraph = null;
+      return true;
+    } else {
+      return false;
+    }
   }
 
   public void close() {
-    clearParents();
-  }
-
-  private void clearParents() {
-    for (ModuleReference parent: parents) {
-      parent.decRef();
+    for (ModuleReference ref: references) {
+      ref.decRef();
     }
-    parents.clear();
+    references.clear();
   }
 
   @Override
-  protected synchronized Class<?> loadClass(String name, boolean resolve)
+  public void addURL(URL url) {
+    super.addURL(url);
+  }
+
+  @Override
+  protected Class<?> loadClass(String name, boolean resolve)
       throws ClassNotFoundException {
-
-    Class<?> c = doLoadClass(name);
-    if (c == null) {
-      c = platformClassLoader.loadClass(name);
+    Class<?> c = findLoadedClass(name);
+    if (c != null) {
+      return c;
     }
-
+    if (loadFromModuleFirst) {
+      try {
+        c = loadFromModule(name);
+      } catch (ClassNotFoundException e) {
+        c = platformClassLoader.loadClass(name);
+      }
+    } else {
+      try {
+        c = platformClassLoader.loadClass(name);
+      } catch (ClassNotFoundException e) {
+        c = loadFromModule(name);
+      }
+    }
     if (resolve) {
       resolveClass(c);
     }
     return c;
   }
 
-  protected synchronized Class<?> doLoadClass(String name) {
+  private Class<?> loadFromModule(String name) throws ClassNotFoundException {
+    Class<?> c = null;
+    Set<ModuleClassLoader> toWalk = getModulesToWalk();
+    for (ModuleClassLoader cl: toWalk) {
+      c = cl.doLoadClass(name);
+      if (c != null) {
+        break;
+      }
+    }
+    if (c == null) {
+      throw new ClassNotFoundException(name);
+    }
+    return c;
+  }
+
+  protected Class<?> doLoadClass(String name) {
     Class<?> c = findLoadedClass(name);
     if (c == null) {
       try {
-        // First try and load the class with the module classloader
         c = findClass(name);
       } catch (ClassNotFoundException e) {
-        // Not found - maybe the parent class loaders can load it?
-        try {
-          // Detect circular hierarchy
-          incRecurseDepth();
-          Set<ModuleClassLoader> walked = getWalked();
-          walked.add(this);
-          for (ModuleReference parent: parents) {
-            checkAlreadyWalked(walked, parent);
-            c = parent.mcl.doLoadClass(name);
-            if (c != null) {
-              break;
-            }
-          }
-          walked.remove(this);
-        } finally {
-          // Make sure we clear the thread locals afterwards
-          checkClearTLs();
+        return null;
+      } catch (LinkageError le) {
+        c = findLoadedClass(name);
+        if (c == null) {
+          throw le;
         }
       }
     }
     return c;
   }
 
-  private Set<ModuleClassLoader> getWalked() {
-    Set<ModuleClassLoader> walked = circDepTL.get();
-    if (walked == null) {
-      walked = new HashSet<>();
-      circDepTL.set(walked);
-    }
-    return walked;
-  }
-
-  private void checkAlreadyWalked(Set<ModuleClassLoader> walked, ModuleReference mr) {
-    if (walked.contains(mr.mcl)) {
-      // Break the circular dep and reduce the ref count
-      // We need to do this on ALL the parents in case there is another circular dep there
-      clearParents();
-      throw new IllegalStateException("Circular dependency in module includes. " + mr.moduleKey);
+  private Set<ModuleClassLoader> getModulesToWalk() {
+    ClassLoader mcl = Thread.currentThread().getContextClassLoader();
+    if (mcl instanceof ModuleClassLoader) {
+      ModuleClassLoader mmcl = (ModuleClassLoader)mcl;
+      return mmcl.getModuleGraph();
+    } else {
+      return getModuleGraph();
     }
   }
 
-  private void incRecurseDepth() {
-    Integer depth = recurseDepth.get();
-    recurseDepth.set(depth == null ? 1 : depth + 1);
+  private Set<ModuleClassLoader> getModuleGraph() {
+    if (modGraph == null) {
+      modGraph = new LinkedHashSet<>();
+      modGraph.add(this);
+      computeModules(modGraph);
+    }
+    return modGraph;
   }
 
-  private int decRecurseDepth() {
-    Integer depth = recurseDepth.get();
-    depth = depth - 1;
-    recurseDepth.set(depth);
-    return depth;
+  private void computeModules(Set<ModuleClassLoader> mods) {
+    // We do a depth first search and refuse to go down paths we've already walked to avoid getting stuck in a loop
+    for (ModuleReference mod: references) {
+      if (!mods.contains(mod.mcl)) {
+        mods.add(mod.mcl);
+        mod.mcl.computeModules(mods);
+      }
+    }
   }
 
   @Override
   public synchronized URL getResource(String name) {
-    return doGetResource(name, true);
-  }
-
-  private URL doGetResource(String name, boolean considerTCCL) {
-    incRecurseDepth();
-    try {
-      // First try with this class loader
-      URL url = findResource(name);
-      if (url == null) {
-        // Detect circular hierarchy
-        Set<ModuleClassLoader> walked = getWalked();
-        walked.add(this);
-
-        //Now try with the parents
-        for (ModuleReference parent: parents) {
-          checkAlreadyWalked(walked, parent);
-          url = parent.mcl.doGetResource(name, considerTCCL);
-          if (url != null) {
-            return url;
-          }
+    URL url = platformClassLoader.getResource(name);
+    if (url == null) {
+      Set<ModuleClassLoader> toWalk = getModulesToWalk();
+      for (ModuleClassLoader cl: toWalk) {
+        url = cl.findResource(name);
+        if (url != null) {
+          return url;
         }
-
-        walked.remove(this);
-
-        // There's now a workaround due to dodgy classloading in Jython
-        // https://github.com/vert-x/mod-lang-jython/issues/7
-        // It seems that Jython doesn't always ask the correct classloader to load resources from modules
-        // to workaround this we can, if the resource is not found, and the TCCL is different from this classloader
-        // to ask the TCCL to load the class - the TCCL should always be set to the moduleclassloader of the actual
-        // module doing the import
-        if (considerTCCL && loadResourcesFromTCCL) {
-          // We need to clear wallked as otherwise can get a circular dependency error when there's no
-          // real circuular dependency
-          walked.clear();
-          ModuleClassLoader tccl = (ModuleClassLoader)Thread.currentThread().getContextClassLoader();
-          if (tccl != this) {
-            // Call with considerTCCL = false to prevent infinite recursion
-            url = tccl.doGetResource(name, false);
-            if (url != null) {
-              return url;
-            }
-          }
-        }
-
-        // Finally try the platform class loader
-        url = platformClassLoader.getResource(name);
       }
-      return url;
-    } finally {
-      checkClearTLs();
     }
+    return url;
   }
 
-  private void checkClearTLs() {
-    if (decRecurseDepth() == 0) {
-      circDepTL.remove();
-      recurseDepth.remove();
-    }
-  }
 
   @Override
   public synchronized Enumeration<URL> getResources(String name) throws IOException {
     final List<URL> totURLs = new ArrayList<>();
 
-    // Local ones
-    addURLs(totURLs, findResources(name));
-
-    try {
-      // Detect circular hierarchy
-      incRecurseDepth();
-      Set<ModuleClassLoader> walked = getWalked();
-      walked.add(this);
-
-      // Parent ones
-      for (ModuleReference parent: parents) {
-        checkAlreadyWalked(walked, parent);
-        Enumeration<URL> urls = parent.mcl.getResources(name);
-        addURLs(totURLs, urls);
-      }
-      walked.remove(this);
-    } finally {
-      checkClearTLs();
-    }
-
     // And platform class loader too
     addURLs(totURLs, platformClassLoader.getResources(name));
+
+    Set<ModuleClassLoader> toWalk = getModulesToWalk();
+    for (ModuleClassLoader cl: toWalk) {
+      Enumeration<URL> urls = cl.findResources(name);
+      addURLs(totURLs, urls);
+    }
 
     return new Enumeration<URL>() {
       Iterator<URL> iter = totURLs.iterator();
@@ -236,7 +222,7 @@ public class ModuleClassLoader extends URLClassLoader {
     URL url = getResource(name);
     try {
       return url != null ? url.openStream() : null;
-    } catch (IOException e) {
+    } catch (IOException ignore) {
     }
     return null;
   }
@@ -247,6 +233,80 @@ public class ModuleClassLoader extends URLClassLoader {
         urls.add(toAdd.nextElement());
       }
     }
+  }
+
+  private static final class LinkedHashSet<T> implements Set<T> {
+
+    private final Object obj = new Object();
+
+    private final Map<T, Object> map = new LinkedHashMap<>();
+
+    @Override
+    public int size() {
+      return map.size();
+    }
+
+    @Override
+    public boolean isEmpty() {
+      return map.isEmpty();
+    }
+
+    @Override
+    public boolean contains(Object o) {
+      return map.containsKey(o);
+    }
+
+    @Override
+    public Iterator<T> iterator() {
+      return map.keySet().iterator();
+    }
+
+    @Override
+    public Object[] toArray() {
+      return map.keySet().toArray();
+    }
+
+    @Override
+    public <T1> T1[] toArray(T1[] a) {
+      return map.keySet().toArray(a);
+    }
+
+    @Override
+    public boolean add(T t) {
+      map.put(t, obj);
+      return true;
+    }
+
+    @Override
+    public boolean remove(Object o) {
+      return map.remove(o) != null;
+    }
+
+    @Override
+    public boolean containsAll(Collection<?> c) {
+      return map.keySet().containsAll(c);
+    }
+
+    @Override
+    public boolean addAll(Collection<? extends T> c) {
+      return false;
+    }
+
+    @Override
+    public boolean retainAll(Collection<?> c) {
+      return false;
+    }
+
+    @Override
+    public boolean removeAll(Collection<?> c) {
+      return false;
+    }
+
+    @Override
+    public void clear() {
+      map.clear();
+    }
+
   }
 
 

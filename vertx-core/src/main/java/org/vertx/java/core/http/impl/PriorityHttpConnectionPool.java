@@ -1,28 +1,31 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
 
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.impl.ConcurrentHashSet;
 import org.vertx.java.core.impl.DefaultContext;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 
 import java.util.ArrayDeque;
+import java.util.HashSet;
 import java.util.Queue;
+import java.util.Set;
 
 /**
  *
@@ -33,7 +36,8 @@ public abstract class PriorityHttpConnectionPool implements HttpPool {
 
   private static final Logger log = LoggerFactory.getLogger(PriorityHttpConnectionPool.class);
 
-  private final Queue<ClientConnection> available = new ArrayDeque<>();
+  private final Set<ClientConnection> available = new HashSet<>();
+  private final Set<ClientConnection> allConnections = new ConcurrentHashSet<>();
   private int maxPoolSize = 1;
   private int connectionCount;
   private final Queue<Waiter> waiters = new ArrayDeque<>();
@@ -57,7 +61,8 @@ public abstract class PriorityHttpConnectionPool implements HttpPool {
     log.trace("available: " + available.size() + " connection count: " + connectionCount + " waiters: " + waiters.size());
   }
 
-  public void getConnection(Handler<ClientConnection> handler,Handler<Throwable> connectExceptionHandler, DefaultContext context) {
+  public void getConnection(final Handler<ClientConnection> handler, Handler<Throwable> connectExceptionHandler,
+                            DefaultContext context) {
     boolean connect = false;
     ClientConnection conn;
     outer: synchronized (this) {
@@ -79,17 +84,29 @@ public abstract class PriorityHttpConnectionPool implements HttpPool {
     if (conn != null) {
       handler.handle(conn);
     } else if (connect) {
-      connect(handler, connectExceptionHandler, context);
+      connect(new Handler<ClientConnection>() {
+        @Override
+        public void handle(ClientConnection conn) {
+          allConnections.add(conn);
+          handler.handle(conn);
+        }
+      }, connectExceptionHandler, context);
     }
   }
 
+
   /**
-   * Inform the pool that the connection has been closed externally.
+   * Inform the pool that the connection has been closed externally
+   * or the connection attempt failed
    */
-  public void connectionClosed() {
+  public void connectionClosed(ClientConnection conn) {
     Waiter waiter;
     synchronized (this) {
       connectionCount--;
+      if (conn != null) {
+        allConnections.remove(conn);
+        available.remove(conn);
+      }
       if (connectionCount < maxPoolSize) {
         //Now the connection count has come down, maybe there is another waiter that can
         //create a new connection
@@ -133,8 +150,18 @@ public abstract class PriorityHttpConnectionPool implements HttpPool {
    * Close the pool
    */
   public void close() {
-    available.clear();
-    waiters.clear();
+    synchronized (this) {
+      available.clear();
+      waiters.clear();
+    }
+    for (ClientConnection conn: allConnections) {
+      try {
+        conn.actualClose();
+      } catch (Throwable t) {
+        log.error("Failed to close connection", t);
+      }
+    }
+    allConnections.clear();
   }
 
   /**
@@ -142,7 +169,7 @@ public abstract class PriorityHttpConnectionPool implements HttpPool {
    */
   protected abstract void connect(final Handler<ClientConnection> connectHandler, final Handler<Throwable> connectErrorHandler, final DefaultContext context);
 
-  private ClientConnection selectConnection(Queue<ClientConnection> available, int connectionCount, int maxPoolSize) {
+  private ClientConnection selectConnection(Set<ClientConnection> available, int connectionCount, int maxPoolSize) {
     ClientConnection conn = null;
 
     if (!available.isEmpty()) {

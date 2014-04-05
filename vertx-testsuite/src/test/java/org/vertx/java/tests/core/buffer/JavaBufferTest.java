@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.tests.core.buffer;
@@ -69,6 +69,41 @@ public class JavaBufferTest extends TestCase {
 
     b.appendBytes(bytes);
     assertEquals(b.length(), 2 * bytes.length);
+  }
+
+  @Test
+  public void testAppendBytesWithOffsetAndLen() throws Exception {
+    int bytesLen = 100;
+    byte[] bytes = TestUtils.generateRandomByteArray(bytesLen);
+    int len = bytesLen - 2;
+
+    Buffer b = new Buffer();
+    b.appendBytes(bytes, 1, len);
+    assertEquals(b.length(), len);
+    byte[] copy = new byte[len];
+    System.arraycopy(bytes, 1, copy, 0, len);
+    assertTrue(TestUtils.byteArraysEqual(copy, b.getBytes()));
+
+    b.appendBytes(bytes, 1, len);
+    assertEquals(b.length(), 2 * len);
+  }
+
+  @Test
+  public void testAppendBufferWithOffsetAndLen() throws Exception {
+    int bytesLen = 100;
+    byte[] bytes = TestUtils.generateRandomByteArray(bytesLen);
+    Buffer src = new Buffer(bytes);
+    int len = bytesLen - 2;
+
+    Buffer b = new Buffer();
+    b.appendBuffer(src, 1, len);
+    assertEquals(b.length(), len);
+    byte[] copy = new byte[len];
+    System.arraycopy(bytes, 1, copy, 0, len);
+    assertTrue(TestUtils.byteArraysEqual(copy, b.getBytes()));
+
+    b.appendBuffer(src, 1, len);
+    assertEquals(b.length(), 2 * len);
   }
 
   @Test
@@ -569,6 +604,45 @@ public class JavaBufferTest extends TestCase {
     assertTrue(TestUtils.buffersEqual(new Buffer(b3), new Buffer(b4)));
   }
 
+  @Test
+  public void testSetBytesWithOffsetAndLen() throws Exception {
+    int bytesLen = 100;
+    byte[] bytes = TestUtils.generateRandomByteArray(bytesLen);
+    int len = bytesLen - 2;
+
+    Buffer b = new Buffer();
+    b.setByte(0, (byte) '0'); 
+    b.setBytes(1, bytes, 1, len);
+    assertEquals(b.length(), len + 1);
+    byte[] copy = new byte[len];
+    System.arraycopy(bytes, 1, copy, 0, len);
+
+    assertTrue(TestUtils.byteArraysEqual(copy, b.getBytes(1, b.length())));
+
+    b.setBytes(b.length(), bytes, 1, len);
+    assertEquals(b.length(), 2 * len + 1);
+  }
+
+
+  @Test
+  public void testSetBufferWithOffsetAndLen() throws Exception {
+    int bytesLen = 100;
+    byte[] bytes = TestUtils.generateRandomByteArray(bytesLen);
+    Buffer src = new Buffer(bytes);
+    int len = bytesLen - 2;
+
+    Buffer b = new Buffer();
+    b.setByte(0, (byte) '0');
+    b.setBuffer(1, src, 1, len);
+    assertEquals(b.length(), len + 1);
+    byte[] copy = new byte[len];
+    System.arraycopy(bytes, 1, copy, 0, len);
+
+    assertTrue(TestUtils.byteArraysEqual(copy, b.getBytes(1, b.length())));
+
+    b.setBuffer(b.length(), src, 1, len);
+    assertEquals(b.length(), 2 * len + 1);
+  }
 
   @Test
   public void testSetBytesString() throws Exception {

@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package vertx.tests.core.net;
@@ -404,7 +404,8 @@ public class TestClient extends TestClientBase {
   }
 
   public void testConnectInvalidHost() {
-    client.connect(1234, "somehost", new AsyncResultHandler<NetSocket>() {
+    client.setConnectTimeout(1000);
+    client.connect(1234, "127.0.0.2", new AsyncResultHandler<NetSocket>() {
       public void handle(AsyncResult<NetSocket> res) {
         tu.azzert(res.failed(), "Connect should not be called");
         tu.azzert(res.cause() != null);
@@ -434,7 +435,7 @@ public class TestClient extends TestClientBase {
     vertx.createNetServer().connectHandler(new Handler<NetSocket>() {
       public void handle(NetSocket sock) {
       }
-    }).listen(1234, "uhqiuwhdqiwuhd", new AsyncResultHandler<NetServer>() {
+    }).listen(1234, "uiqwhdqiuwdhqu", new AsyncResultHandler<NetServer>() {
       @Override
       public void handle(AsyncResult<NetServer> ar) {
         tu.azzert(ar.failed());
@@ -686,6 +687,89 @@ public class TestClient extends TestClientBase {
         }
       }
     });
+  }
+
+  public void testStartTLSClientTrustAll() {
+    TLSTestParams params = TLSTestParams.deserialize(vertx.sharedData().<String, byte[]>getMap("TLSTest").get("params"));
+
+    if (params.clientTrustAll) {
+      client.setTrustAll(true);
+    }
+
+    if (params.clientTrust) {
+      client.setTrustStorePath("./src/test/keystores/client-truststore.jks")
+              .setTrustStorePassword("wibble");
+    }
+    if (params.clientCert) {
+      client.setKeyStorePath("./src/test/keystores/client-keystore.jks")
+              .setKeyStorePassword("wibble");
+    }
+
+    final boolean shouldPass = params.shouldPass;
+
+    client.connect(4043, new AsyncResultHandler<NetSocket>() {
+      public void handle(AsyncResult<NetSocket> res) {
+        tu.checkThread();
+        if (res.succeeded()) {
+          if (!shouldPass) {
+            tu.azzert(false, "Should not connect");
+            return;
+          }
+          final int numChunks = 100;
+          final int chunkSize = 100;
+
+          final Buffer received = new Buffer();
+          final Buffer sent = new Buffer();
+
+          final NetSocket socket = res.result();
+
+          socket.dataHandler(new Handler<Buffer>() {
+            boolean ssl = false;
+            @Override
+            public void handle(Buffer buffer) {
+              tu.checkThread();
+              received.appendBuffer(buffer);
+
+              if (!ssl) {
+                tu.azzert(!socket.isSsl());
+                ssl = true;
+                // server did write it's response time to upgrade to ssl too
+                socket.ssl(new Handler<Void>() {
+                  @Override
+                  public void handle(Void event) {
+                    // upgrade complete new send some data over the ssl socket
+                    for (int i = 0; i < numChunks; i++) {
+                      Buffer buff = TestUtils.generateRandomBuffer(chunkSize);
+                      sent.appendBuffer(buff);
+                      socket.write(buff);
+                    }
+                  }
+                });
+              } else {
+                tu.azzert(socket.isSsl());
+                if (received.length() == sent.length()) {
+                  tu.azzert(TestUtils.buffersEqual(sent, received));
+                  tu.testComplete();
+                }
+              }
+            }
+          });
+          // write a buffer which will be used to signal the server to upgrade to ssl
+          Buffer buff = TestUtils.generateRandomBuffer(chunkSize);
+          sent.appendBuffer(buff);
+          socket.write(buff);
+
+        } else {
+          if (shouldPass) {
+            tu.azzert(false, "Should not throw exception");
+          } else {
+            tu.testComplete();
+          }
+        }
+      }
+    });
+
+
   }
 
   public void testSharedServersMultipleInstances1() {

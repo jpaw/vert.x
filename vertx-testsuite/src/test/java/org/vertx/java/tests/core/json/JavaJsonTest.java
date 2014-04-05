@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.tests.core.json;
@@ -23,6 +23,8 @@ import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.testframework.TestBase;
+
+import java.util.Iterator;
 
 /**
  *
@@ -60,8 +62,8 @@ public class JavaJsonTest extends TestBase {
     object.putArray("array", array);
 
     //want to clone
-    JsonObject object2 = new JsonObject(object.toMap());
-    //this shouldn't throw an exception, it does before patch
+    JsonObject object2 = object.copy();
+
     JsonArray array2 = object2.getArray("array");
   }
 
@@ -80,15 +82,86 @@ public class JavaJsonTest extends TestBase {
   public void testPutsNullObjectWithoutException() {
     log.debug(
       new JsonObject()
+        .putString("null", null)
+        .encode()
+    );
+    log.debug(
+      new JsonObject()
         .putObject("null", null) // this shouldn't cause a NullPointerException
         .encode()
     );
-    
+    log.debug(
+      new JsonObject()
+        .putArray("null", null)
+        .encode()
+    );
+    log.debug(
+      new JsonObject()
+        .putElement("null", null)
+        .encode()
+    );
+    log.debug(
+      new JsonObject()
+        .putNumber("null", null)
+        .encode()
+    );
+    log.debug(
+      new JsonObject()
+        .putBoolean("null", null)
+        .encode()
+    );
+    log.debug(
+      new JsonObject()
+        .putBinary("null", null)
+        .encode()
+    );
+    log.debug(
+      new JsonObject()
+        .putValue("null", null)
+        .encode()
+    );
+
     log.debug(
       new JsonObject()
         .putObject("null", new JsonObject().putString("foo", "bar"))
         .encode()
     );
+  }
+
+  @Test
+  public void testNullValuesInArray() {
+    assertNull(new JsonArray().add(null).get(0));
+    assertNull(new JsonArray().addArray(null).get(0));
+    assertNull(new JsonArray().addBoolean(null).get(0));
+    assertNull(new JsonArray().addBinary(null).get(0));
+    assertNull(new JsonArray().addElement(null).get(0));
+    assertNull(new JsonArray().addNumber(null).get(0));
+    assertNull(new JsonArray().addObject(null).get(0));
+    assertNull(new JsonArray().addString(null).get(0));
+  }
+
+  @Test
+  public void testGetNullValues() {
+    assertNull(new JsonObject().putString("foo", null).getString("foo"));
+    assertNull(new JsonObject().putObject("foo", null).getObject("foo"));
+    assertNull(new JsonObject().putArray("foo", null).getArray("foo"));
+    assertNull(new JsonObject().putElement("foo", null).getElement("foo"));
+    assertNull(new JsonObject().putNumber("foo", null).getNumber("foo"));
+    assertNull(new JsonObject().putBoolean("foo", null).getBoolean("foo"));
+    assertNull(new JsonObject().putBinary("foo", null).getBinary("foo"));
+    assertNull(new JsonObject().putValue("foo", null).getValue("foo"));
+  }
+
+  @Test
+  public void testContainsNullValues() {
+    assertTrue(new JsonObject().putString("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putObject("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putArray("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putElement("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putNumber("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putBoolean("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putBinary("foo", null).containsField("foo"));
+    assertTrue(new JsonObject().putValue("foo", null).containsField("foo"));
   }
   
   @Test
@@ -253,4 +326,58 @@ public class JavaJsonTest extends TestBase {
 
     assertEquals(array1, array2);
   }
+  
+  @Test
+  public void testJsonArraysWithNullsEquality() {
+    JsonArray array1 = new JsonArray(new Object[]{null, "a"});
+    JsonArray array2 = new JsonArray(new Object[]{null, "a"});
+
+    assertEquals(array1, array2);
+  }
+
+  @Test
+  public void testJsonArraysWithNullsEquality2() {
+    JsonArray array1 = new JsonArray(new Object[]{null, "a"});
+    JsonArray array2 = new JsonArray(new Object[]{"b", "a"});
+
+    assertFalse(array1.equals(array2));
+  }
+
+  @Test
+  public void testGetBinary() {
+    JsonObject json = new JsonObject();
+    assertNull(json.getBinary("binary"));
+  }
+
+  @Test
+  public void testCreateJsonArrayFromArray() {
+    Object[] numbers = new Integer[]{1, 2, 3};
+    // Json is not immutable
+    JsonArray json = new JsonArray(numbers);
+    json.add(4);
+    assertEquals(4, json.size());
+  }
+
+  @Test
+  public void testCreateJsonArrayFromArray2() {
+    Object[] numbers = new Integer[] {1, 2, 3};
+    // Json is not immutable
+    JsonArray json = new JsonArray(numbers);
+    try {
+      Iterator i = json.iterator();
+      i.next();
+      i.remove();
+    } catch (UnsupportedOperationException e) {
+      fail(e.getMessage());
+    }
+  }
+
+  @Test
+  public void testContainsField() {
+    JsonObject obj = new JsonObject().putString("s", "bar");
+    assertTrue(obj.containsField("s"));
+    assertFalse(obj.containsField("t"));
+  }
+
+
 }

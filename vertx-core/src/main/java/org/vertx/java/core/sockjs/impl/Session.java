@@ -1,22 +1,23 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.sockjs.impl;
 
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.json.DecodeException;
@@ -25,6 +26,7 @@ import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.shareddata.Shareable;
 import org.vertx.java.core.sockjs.SockJSSocket;
 
+import java.net.InetSocketAddress;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
@@ -41,7 +43,6 @@ import java.util.Queue;
 class Session extends SockJSSocketBase implements Shareable {
 
   private static final Logger log = LoggerFactory.getLogger(Session.class);
-
   private final Map<String, Session> sessions;
   private final Queue<String> pendingWrites = new LinkedList<>();
   private final Queue<String> pendingReads = new LinkedList<>();
@@ -61,12 +62,18 @@ class Session extends SockJSSocketBase implements Shareable {
   private Handler<Void> endHandler;
   private Handler<Throwable> exceptionHandler;
   private boolean handleCalled;
+  private InetSocketAddress localAddress;
+  private InetSocketAddress remoteAddress;
+  private String uri;
+  private MultiMap headers;
 
-  Session(VertxInternal vertx, Map<String, Session> sessions, long heartbeatPeriod, Handler<SockJSSocket> sockHandler) {
+  Session(VertxInternal vertx, Map<String, Session> sessions, long heartbeatPeriod,
+          Handler<SockJSSocket> sockHandler) {
     this(vertx, sessions, null, -1, heartbeatPeriod, sockHandler);
   }
 
-  Session(VertxInternal vertx, Map<String, Session> sessions, String id, long timeout, long heartbeatPeriod, Handler<SockJSSocket> sockHandler) {
+  Session(VertxInternal vertx, Map<String, Session> sessions, String id, long timeout, long heartbeatPeriod,
+          Handler<SockJSSocket> sockHandler) {
     super(vertx);
     this.sessions = sessions;
     this.id = id;
@@ -168,6 +175,26 @@ class Session extends SockJSSocketBase implements Shareable {
     }
   }
 
+  @Override
+  public InetSocketAddress remoteAddress() {
+    return remoteAddress;
+  }
+
+  @Override
+  public InetSocketAddress localAddress() {
+    return localAddress;
+  }
+
+  @Override
+  public MultiMap headers() {
+    return headers;
+  }
+
+  @Override
+  public String uri() {
+    return uri;
+  }
+
   synchronized boolean isClosed() {
     return closed;
   }
@@ -266,8 +293,11 @@ class Session extends SockJSSocketBase implements Shareable {
       sessions.remove(id);
     }
 
-    if (endHandler != null) {
-      endHandler.handle(null);
+    if (!closed) {
+      closed = true;
+      if (endHandler != null) {
+        endHandler.handle(null);
+      }
     }
   }
 
@@ -325,11 +355,9 @@ class Session extends SockJSSocketBase implements Shareable {
   }
 
   private void writeClosed(TransportListener lst, int code, String msg) {
-
     StringBuilder sb = new StringBuilder("c[");
     sb.append(String.valueOf(code)).append(",\"");
     sb.append(msg).append("\"]");
-
     lst.sendFrame(sb.toString());
   }
 
@@ -339,4 +367,11 @@ class Session extends SockJSSocketBase implements Shareable {
     openWritten = true;
   }
 
+  void setInfo(InetSocketAddress localAddress, InetSocketAddress remoteAddress, String uri,
+               MultiMap headers) {
+    this.localAddress = localAddress;
+    this.remoteAddress = remoteAddress;
+    this.uri = uri;
+    this.headers = BaseTransport.removeCookieHeaders(headers);
+  }
 }

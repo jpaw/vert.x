@@ -1,25 +1,29 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package vertx.tests.core.eventbus;
 
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Future;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
+import org.vertx.java.core.eventbus.ReplyException;
+import org.vertx.java.core.eventbus.ReplyFailure;
+import org.vertx.java.core.eventbus.impl.ReplyFailureMessage;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.logging.Logger;
@@ -38,6 +42,8 @@ import java.util.Random;
 public class LocalEchoClient extends EventBusAppBase {
 
   private static final Logger log = LoggerFactory.getLogger(LocalEchoClient.class);
+
+  public final static long TIMEOUT = 1500;
 
   private String echoAddress() {
     String echoAddress = (String)vertx.sharedData().getMap("echoaddress").get("echoaddress");
@@ -203,6 +209,23 @@ public class LocalEchoClient extends EventBusAppBase {
     eb.send(echoAddress(), obj, handler);
   }
 
+  public void testEchoJsonArray() {
+    JsonArray obj = new JsonArray();
+    obj.add("foo");
+    obj.add(12);
+    obj.add(true);
+    obj.add(false);
+    Handler<Message<JsonArray>> handler = echoHandler(obj);
+    eb.send(echoAddress(), obj, handler);
+  }
+
+  public void testEchoNullJsonArray() {
+    JsonArray obj = null;
+    Handler<Message<JsonArray>> handler = echoHandler(obj);
+    eb.send(echoAddress(), obj, handler);
+  }
+
+
   public void testEchoCharacter() {
     // must use new Character instance, not autoboxing
     Character chr = new Character((char)(new Random().nextInt()));
@@ -214,6 +237,147 @@ public class LocalEchoClient extends EventBusAppBase {
     Character chr = null;
     Handler<Message<Character>> handler = echoHandler(chr);
     eb.send(echoAddress(), chr, handler);
+  }
+
+  public void testSendWithTimeoutReply() {
+    String address = "some-address";
+    eb.sendWithTimeout(address, "foo", 500, new Handler<AsyncResult<Message<String>>>() {
+      @Override
+      public void handle(AsyncResult<Message<String>> reply) {
+        tu.azzert(reply.succeeded());
+        tu.azzert("bar".equals(reply.result().body()));
+        tu.testComplete();
+      }
+    });
+  }
+
+  public void testSendWithTimeoutNoReply() {
+    final long start = System.currentTimeMillis();
+
+    String address = "some-address";
+    eb.sendWithTimeout(address, "foo", TIMEOUT, new Handler<AsyncResult<Message<String>>>() {
+      boolean replied;
+      @Override
+      public void handle(AsyncResult<Message<String>> reply) {
+        tu.azzert(!replied);
+        tu.azzert(reply.failed());
+        tu.azzert(System.currentTimeMillis() - start >= TIMEOUT);
+        // Now wait a bit longer in case a reply actually comes
+        vertx.setTimer(TIMEOUT * 2, new Handler<Long>() {
+          @Override
+          public void handle(Long tid) {
+            tu.testComplete();
+          }
+        });
+        replied = true;
+      }
+    });
+  }
+
+  public void testSendReplyWithTimeoutNoReplyHandler() {
+    String address = "some-address";
+    eb.send(address, "foo");
+  }
+
+  public void testSendWithDefaultTimeoutNoReply() {
+
+    eb.setDefaultReplyTimeout(TIMEOUT);
+    String address = "some-address";
+    eb.send(address, "foo", new Handler<Message<String>>() {
+      @Override
+      public void handle(Message<String> reply) {
+        tu.azzert(false, "reply handler should not be called");
+      }
+    });
+    // Wait a bit in case a reply comes
+    vertx.setTimer(TIMEOUT * 3, new Handler<Long>() {
+      @Override
+      public void handle(Long tid) {
+        tu.testComplete();
+      }
+    });
+    eb.setDefaultReplyTimeout(-1);
+  }
+
+  public void testReplyWithTimeoutReply() {
+
+    String address = "some-address";
+    eb.send(address, "foo", new Handler<Message<String>>() {
+      @Override
+      public void handle(Message<String> reply) {
+        tu.azzert("bar".equals(reply.body()));
+        reply.reply("quux");
+      }
+    });
+  }
+
+  public void testReplyWithTimeoutNoReply() {
+
+    String address = "some-address";
+    final long start = System.currentTimeMillis();
+    eb.send(address, "foo", new Handler<Message<String>>() {
+      @Override
+      public void handle(final Message<String> reply) {
+        tu.azzert("bar".equals(reply.body()));
+        // Delay the reply
+        vertx.setTimer(TIMEOUT * 2, new Handler<Long>() {
+          @Override
+          public void handle(Long tid) {
+            reply.reply("quux");
+          }
+        });
+      }
+    });
+  }
+
+  public void testReplyNoHandlers() {
+    String address = "some-address";
+
+    eb.sendWithTimeout(address, "foo", TIMEOUT, new Handler<AsyncResult<Message<String>>>() {
+      @Override
+      public void handle(AsyncResult<Message<String>> reply) {
+        tu.azzert(reply.failed());
+        tu.azzert(reply.cause() instanceof ReplyException);
+        ReplyException ex = (ReplyException)reply.cause();
+        tu.azzert(ex.failureType() == ReplyFailure.NO_HANDLERS);
+        tu.testComplete();
+      }
+    });
+  }
+
+  public void testReplyRecipientFailure() {
+    String address = "some-address";
+
+    final String msg = "too many giraffes";
+
+    eb.sendWithTimeout(address, "foo", TIMEOUT, new Handler<AsyncResult<Message<String>>>() {
+      @Override
+      public void handle(AsyncResult<Message<String>> reply) {
+        tu.azzert(reply.failed());
+        tu.azzert(reply.cause() instanceof ReplyException);
+        ReplyException ex = (ReplyException)reply.cause();
+        tu.azzert(ex.failureType() == ReplyFailure.RECIPIENT_FAILURE);
+        tu.azzert(23 == ex.failureCode());
+        tu.azzert(msg.equals(ex.getMessage()));
+        tu.testComplete();
+      }
+    });
+  }
+
+  public void testReplyRecipientFailureStandardHandler() {
+    String address = "some-address";
+    final String msg = "too many giraffes";
+    eb.send(address, "foo", new Handler<Message>() {
+      @Override
+      public void handle(Message message) {
+        tu.azzert((message instanceof ReplyFailureMessage));
+        ReplyFailureMessage rfmsg = (ReplyFailureMessage)message;
+        tu.azzert(ReplyFailure.RECIPIENT_FAILURE == rfmsg.body().failureType());
+        tu.azzert(23 == rfmsg.body().failureCode());
+        tu.azzert(msg.equals(rfmsg.body().getMessage()));
+        tu.testComplete();
+      }
+    });
   }
 
   private <T> Handler<Message<T>> echoHandler(final Object msg) {

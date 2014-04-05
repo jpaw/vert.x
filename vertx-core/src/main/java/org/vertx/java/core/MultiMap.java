@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2013 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core;
@@ -24,6 +24,8 @@ import java.util.Set;
  * @author <a href="mailto:nmaurer@redhat.com">Norman Maurer</a>
  */
 public interface MultiMap extends Iterable<Map.Entry<String, String>> {
+
+  String get(CharSequence name);
 
   /**
    * Returns the value of with the specified name.  If there are
@@ -42,6 +44,8 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
    *         are found
    */
   List<String> getAll(String name);
+  List<String> getAll(CharSequence name);
+
 
   /**
    * Returns all entries it contains.
@@ -58,6 +62,7 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
    * @return True if at least one entry is found
    */
   boolean contains(String name);
+  boolean contains(CharSequence name);
 
   /**
    * Return true if empty
@@ -74,8 +79,6 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
   /**
    * Adds a new value with the specified name and value.
    *
-   * If the specified value is not a {@link String}, it is converted
-   * into a {@link String} by {@link Object#toString()}.
    *
    * @param name The name
    * @param value The value being added
@@ -83,6 +86,7 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
    * @return {@code this}
    */
   MultiMap add(String name, String value);
+  MultiMap add(CharSequence name, CharSequence value);
 
   /**
    * Adds a new values under the specified name
@@ -93,6 +97,7 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
    * @return {@code this}
    */
   MultiMap add(String name, Iterable<String> values);
+  MultiMap add(CharSequence name, Iterable<CharSequence> values);
 
   /**
    * Adds all the entries from another MultiMap to this one
@@ -118,6 +123,7 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
    * @return {@code this}
    */
   MultiMap set(String name, String value);
+  MultiMap set(CharSequence name, CharSequence value);
 
   /**
    * Sets values for the specified name.
@@ -127,6 +133,8 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
    * @return {@code this}
    */
   MultiMap set(String name, Iterable<String> values);
+  MultiMap set(CharSequence name, Iterable<CharSequence> values);
+
 
   /**
    * Cleans this instance.
@@ -149,6 +157,8 @@ public interface MultiMap extends Iterable<Map.Entry<String, String>> {
   * @return {@code this}
   */
   MultiMap remove(String name);
+  MultiMap remove(CharSequence name);
+
 
   /**
    * Removes all

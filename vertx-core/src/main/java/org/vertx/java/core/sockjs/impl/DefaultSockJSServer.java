@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.sockjs.impl;
@@ -50,6 +50,7 @@ public class DefaultSockJSServer implements SockJSServer, Handler<HttpServerRequ
   private WebSocketMatcher wsMatcher = new WebSocketMatcher();
   private final Map<String, Session> sessions;
   private EventBusBridgeHook hook;
+  private long timerID;
 
   public DefaultSockJSServer(final VertxInternal vertx, final HttpServer httpServer) {
     this.vertx = vertx;
@@ -69,10 +70,13 @@ public class DefaultSockJSServer implements SockJSServer, Handler<HttpServerRequ
     httpServer.websocketHandler(wsMatcher);
     // Sanity check - a common mistake users make is to set the http request handler AFTER they have created this
     // which overwrites this one.
-    vertx.setPeriodic(5000, new Handler<Long>() {
+    timerID = vertx.setPeriodic(5000, new Handler<Long>() {
       @Override
       public void handle(Long timerID) {
-        if (httpServer.requestHandler() != DefaultSockJSServer.this) {
+        if (httpServer.requestHandler() == null) {
+          // Implies server is closed - cancel timer id
+          vertx.cancelTimer(timerID);
+        } else if (httpServer.requestHandler() != DefaultSockJSServer.this) {
           log.warn("You have overwritten the Http server request handler AFTER the SockJSServer has been created " +
                    "which will stop the SockJSServer from functioning. Make sure you set http request handler BEFORE " +
                    "you create the SockJSServer");
@@ -87,6 +91,11 @@ public class DefaultSockJSServer implements SockJSServer, Handler<HttpServerRequ
       log.trace("Got request in sockjs server: " + req.uri());
     }
     rm.handle(req);
+  }
+
+  @Override
+  public void close() {
+    vertx.cancelTimer(timerID);
   }
 
   private static JsonObject setDefaults(JsonObject config) {
@@ -225,6 +234,16 @@ public class DefaultSockJSServer implements SockJSServer, Handler<HttpServerRequ
 	  if (hook != null) {
 		  busBridge.setHook(hook);
 	  }
+    installApp(sjsConfig, busBridge);
+    return this;
+  }
+
+  public SockJSServer bridge(JsonObject sjsConfig, JsonArray inboundPermitted, JsonArray outboundPermitted,
+                             JsonObject bridgeConfig) {
+    EventBusBridge busBridge = new EventBusBridge(vertx, inboundPermitted, outboundPermitted, bridgeConfig);
+    if (hook != null) {
+      busBridge.setHook(hook);
+    }
     installApp(sjsConfig, busBridge);
     return this;
   }

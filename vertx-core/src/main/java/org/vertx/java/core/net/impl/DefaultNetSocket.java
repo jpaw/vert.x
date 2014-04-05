@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.net.impl;
@@ -21,19 +21,26 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.handler.ssl.SslHandler;
 import io.netty.util.CharsetUtil;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.GenericFutureListener;
+import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.VoidHandler;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.file.impl.PathAdjuster;
 import org.vertx.java.core.impl.DefaultContext;
+import org.vertx.java.core.impl.DefaultFutureResult;
 import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.net.NetSocket;
 
 import java.io.File;
 import java.net.InetSocketAddress;
 import java.nio.charset.Charset;
+import java.util.ArrayDeque;
+import java.util.Queue;
 import java.util.UUID;
 
 public class DefaultNetSocket extends ConnectionBase implements NetSocket {
@@ -44,9 +51,15 @@ public class DefaultNetSocket extends ConnectionBase implements NetSocket {
   private Handler<Void> endHandler;
   private Handler<Void> drainHandler;
   private final Handler<Message<Buffer>> writeHandler;
+  private Queue<Buffer> pendingData;
+  private boolean paused = false;
+  private final TCPSSLHelper helper;
+  private boolean client;
 
-  public DefaultNetSocket(VertxInternal vertx, Channel channel, DefaultContext context) {
+  public DefaultNetSocket(VertxInternal vertx, Channel channel, DefaultContext context, TCPSSLHelper helper, boolean client) {
     super(vertx, channel, context);
+    this.helper = helper;
+    this.client = client;
     this.writeHandlerID = UUID.randomUUID().toString();
     writeHandler = new Handler<Message<Buffer>>() {
       public void handle(Message<Buffer> msg) {
@@ -92,12 +105,31 @@ public class DefaultNetSocket extends ConnectionBase implements NetSocket {
 
   @Override
   public NetSocket pause() {
+    paused = true;
     doPause();
     return this;
   }
 
   @Override
   public NetSocket resume() {
+    if (!paused) {
+      return this;
+    }
+    paused = false;
+    if (pendingData != null) {
+      for (;;) {
+        final Buffer buf = pendingData.poll();
+        if (buf == null) {
+          break;
+        }
+        vertx.runOnContext(new VoidHandler() {
+          @Override
+          protected void handle() {
+            handleDataReceived(buf);
+          }
+        });
+      }
+    }
     doResume();
     return this;
   }
@@ -132,8 +164,33 @@ public class DefaultNetSocket extends ConnectionBase implements NetSocket {
 
   @Override
   public NetSocket sendFile(String filename) {
+    return sendFile(filename, null);
+  }
+
+  @Override
+  public NetSocket sendFile(String filename, final Handler<AsyncResult<Void>> resultHandler) {
     File f = new File(PathAdjuster.adjust(vertx, filename));
-    super.sendFile(f);
+    ChannelFuture future = super.sendFile(f);
+
+    if (resultHandler != null) {
+      future.addListener(new ChannelFutureListener() {
+        public void operationComplete(ChannelFuture future) throws Exception {
+          final AsyncResult<Void> res;
+          if (future.isSuccess()) {
+            res = new DefaultFutureResult<>((Void)null);
+          } else {
+            res = new DefaultFutureResult<>(future.cause());
+          }
+          vertx.runOnContext(new Handler<Void>() {
+            @Override
+            public void handle(Void v) {
+              resultHandler.handle(res);
+            }
+          });
+        }
+      });
+    }
+
     return this;
   }
 
@@ -194,6 +251,13 @@ public class DefaultNetSocket extends ConnectionBase implements NetSocket {
   }
 
   void handleDataReceived(Buffer data) {
+    if (paused) {
+      if (pendingData == null) {
+        pendingData = new ArrayDeque<>();
+      }
+      pendingData.add(data);
+      return;
+    }
     if (dataHandler != null) {
       setContext();
       try {
@@ -222,5 +286,47 @@ public class DefaultNetSocket extends ConnectionBase implements NetSocket {
     }
   }
 
+  @Override
+  public NetSocket ssl(final Handler<Void> handler) {
+    SslHandler sslHandler = channel.pipeline().get(SslHandler.class);
+    if (sslHandler == null) {
+      sslHandler = helper.createSslHandler(vertx, client);
+      channel.pipeline().addFirst(sslHandler);
+    }
+    sslHandler.handshakeFuture().addListener(new GenericFutureListener<Future<Channel>>() {
+      @Override
+      public void operationComplete(final Future<Channel> future) throws Exception {
+        if (context.isOnCorrectWorker(channel.eventLoop())) {
+          if (future.isSuccess()) {
+            try {
+              vertx.setContext(context);
+              handler.handle(null);
+            } catch (Throwable t) {
+              context.reportException(t);
+            }
+          } else {
+            context.reportException(future.cause());
+          }
+
+        } else {
+          context.execute(new Runnable() {
+            public void run() {
+              if (future.isSuccess()) {
+                handler.handle(null);
+              } else {
+                context.reportException(future.cause());
+              }
+            }
+          });
+        }
+      }
+    });
+    return this;
+  }
+
+  @Override
+  public boolean isSsl() {
+    return channel.pipeline().get(SslHandler.class) != null;
+  }
 }
 

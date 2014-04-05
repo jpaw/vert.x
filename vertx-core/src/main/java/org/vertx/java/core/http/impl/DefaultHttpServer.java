@@ -1,17 +1,17 @@
-/**
- * Copyright 2011-2012 the original author or authors.
+/*
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
@@ -39,7 +39,10 @@ import org.vertx.java.core.http.ServerWebSocket;
 import org.vertx.java.core.http.impl.cgbystrom.FlashPolicyHandler;
 import org.vertx.java.core.http.impl.ws.DefaultWebSocketFrame;
 import org.vertx.java.core.http.impl.ws.WebSocketFrame;
-import org.vertx.java.core.impl.*;
+import org.vertx.java.core.impl.Closeable;
+import org.vertx.java.core.impl.DefaultContext;
+import org.vertx.java.core.impl.DefaultFutureResult;
+import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.core.logging.impl.LoggerFactory;
 import org.vertx.java.core.net.impl.*;
@@ -54,9 +57,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import static io.netty.handler.codec.http.HttpHeaders.Names.CONNECTION;
-import static io.netty.handler.codec.http.HttpHeaders.Names.HOST;
-import static io.netty.handler.codec.http.HttpHeaders.Values.WEBSOCKET;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
@@ -67,10 +67,9 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 public class DefaultHttpServer implements HttpServer, Closeable {
 
   private static final Logger log = LoggerFactory.getLogger(DefaultHttpServer.class);
-  private static final ExceptionDispatchHandler EXCEPTION_DISPATCH_HANDLER = new ExceptionDispatchHandler();
 
   final VertxInternal vertx;
-  private final TCPSSLHelper tcpHelper = new TCPSSLHelper();
+  final TCPSSLHelper tcpHelper = new TCPSSLHelper();
   private final DefaultContext actualCtx;
   private Handler<HttpServerRequest> requestHandler;
   private Handler<ServerWebSocket> wsHandler;
@@ -78,6 +77,8 @@ public class DefaultHttpServer implements HttpServer, Closeable {
   private ChannelGroup serverChannelGroup;
   private boolean listening;
   private String serverOrigin;
+  private boolean compressionSupported;
+  private int maxWebSocketFrameSize = 65536;
 
   private ChannelFuture bindFuture;
   private ServerID id;
@@ -158,12 +159,10 @@ public class DefaultHttpServer implements HttpServer, Closeable {
         bootstrap.channel(NioServerSocketChannel.class);
         tcpHelper.applyConnectionOptions(bootstrap);
         tcpHelper.checkSSL(vertx);
-
         bootstrap.childHandler(new ChannelInitializer<Channel>() {
             @Override
             protected void initChannel(Channel ch) throws Exception {
               ChannelPipeline pipeline = ch.pipeline();
-              pipeline.addLast("exceptionDispatcher", EXCEPTION_DISPATCH_HANDLER);
               if (tcpHelper.isSSL()) {
                 SSLEngine engine = tcpHelper.getSSLContext().createSSLEngine();
                 engine.setUseClientMode(false);
@@ -184,9 +183,12 @@ public class DefaultHttpServer implements HttpServer, Closeable {
                 pipeline.addLast("ssl", new SslHandler(engine));
               }
               pipeline.addLast("flashpolicy", new FlashPolicyHandler());
-              pipeline.addLast("httpDecoder", new HttpRequestDecoder());
-              pipeline.addLast("httpEncoder", new HttpResponseEncoder());
-              if (tcpHelper.isSSL()) {
+              pipeline.addLast("httpDecoder", new HttpRequestDecoder(4096, 8192, 8192, false));
+              pipeline.addLast("httpEncoder", new VertxHttpResponseEncoder());
+              if (compressionSupported) {
+                pipeline.addLast("deflater", new HttpChunkContentCompressor());
+              }
+              if (tcpHelper.isSSL() || compressionSupported) {
                 // only add ChunkedWriteHandler when SSL is enabled otherwise it is not needed as FileRegion is used.
                 pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());       // For large file / sendfile support
               }
@@ -491,6 +493,29 @@ public class DefaultHttpServer implements HttpServer, Closeable {
     return tcpHelper.isUsePooledBuffers();
   }
 
+  @Override
+  public HttpServer setCompressionSupported(boolean compressionSupported) {
+    checkListening();
+    this.compressionSupported = compressionSupported;
+    return this;
+  }
+
+  @Override
+  public boolean isCompressionSupported() {
+    return compressionSupported;
+  }
+
+  @Override
+  public HttpServer setMaxWebSocketFrameSize(int maxSize) {
+    maxWebSocketFrameSize = maxSize;
+    return this;
+  }
+
+  @Override
+  public int getMaxWebSocketFrameSize() {
+    return maxWebSocketFrameSize;
+  }
+
   private void actualClose(final DefaultContext closeContext, final Handler<AsyncResult<Void>> done) {
     if (id != null) {
       vertx.sharedHttpServers().remove(id);
@@ -546,17 +571,17 @@ public class DefaultHttpServer implements HttpServer, Closeable {
       super(vertx, DefaultHttpServer.this.connectionMap);
     }
 
-    private void sendError(String err, HttpResponseStatus status, Channel ch) {
+    private void sendError(CharSequence err, HttpResponseStatus status, Channel ch) {
       FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, status);
       if (status.code() == METHOD_NOT_ALLOWED.code()) {
         // SockJS requires this
-        resp.headers().set("allow", "GET");
+        resp.headers().set(org.vertx.java.core.http.HttpHeaders.ALLOW, org.vertx.java.core.http.HttpHeaders.GET);
       }
       if (err != null) {
-        resp.content().writeBytes(err.getBytes(CharsetUtil.UTF_8));
-        resp.headers().set("Content-Length", err.length());
+        resp.content().writeBytes(err.toString().getBytes(CharsetUtil.UTF_8));
+        HttpHeaders.setContentLength(resp, err.length());
       } else {
-        resp.headers().set(HttpHeaders.Names.CONTENT_LENGTH, "0");
+        HttpHeaders.setContentLength(resp, 0);
       }
 
       ch.writeAndFlush(resp);
@@ -577,11 +602,11 @@ public class DefaultHttpServer implements HttpServer, Closeable {
           ch.writeAndFlush(new DefaultFullHttpResponse(HTTP_1_1, CONTINUE));
         }
 
-        if (wsHandlerManager.hasHandlers() && WEBSOCKET.equalsIgnoreCase(request.headers().get(HttpHeaders.Names.UPGRADE))) {
+        if (wsHandlerManager.hasHandlers() && request.headers().contains(org.vertx.java.core.http.HttpHeaders.UPGRADE, org.vertx.java.core.http.HttpHeaders.WEBSOCKET, true)) {
           // As a fun part, Firefox 6.0.2 supports Websockets protocol '7'. But,
           // it doesn't send a normal 'Connection: Upgrade' header. Instead it
           // sends: 'Connection: keep-alive, Upgrade'. Brilliant.
-          String connectionHeader = request.headers().get(CONNECTION);
+          String connectionHeader = request.headers().get(org.vertx.java.core.http.HttpHeaders.CONNECTION);
           if (connectionHeader == null || !connectionHeader.toLowerCase().contains("upgrade")) {
             sendError("\"Connection\" must be \"Upgrade\".", BAD_REQUEST, ch);
             return;
@@ -662,12 +687,21 @@ public class DefaultHttpServer implements HttpServer, Closeable {
       } else {
         prefix = "wss://";
       }
-      return prefix + req.headers().get(HOST) + new URI(req.getUri()).getPath();
+      URI uri = new URI(req.getUri());
+      String path = uri.getRawPath();
+      String loc =  prefix + HttpHeaders.getHost(req) + path;
+      String query = uri.getRawQuery();
+      if (query != null) {
+        loc += "?" + query;
+      }
+      return loc;
     }
 
     private void handshake(final FullHttpRequest request, final Channel ch, ChannelHandlerContext ctx) throws Exception {
       final WebSocketServerHandshaker shake;
-      WebSocketServerHandshakerFactory factory = new WebSocketServerHandshakerFactory(getWebSocketLocation(ch.pipeline(), request), null, false);
+      WebSocketServerHandshakerFactory factory =
+          new WebSocketServerHandshakerFactory(getWebSocketLocation(ch.pipeline(), request), null, false,
+                                               maxWebSocketFrameSize);
       shake = factory.newHandshaker(request);
 
       if (shake == null) {
@@ -703,7 +737,7 @@ public class DefaultHttpServer implements HttpServer, Closeable {
           }
         };
 
-        final DefaultServerWebSocket ws = new DefaultServerWebSocket(vertx, theURI.getPath(),
+        final DefaultServerWebSocket ws = new DefaultServerWebSocket(vertx, theURI.toString(), theURI.getPath(),
             theURI.getQuery(), new HttpHeadersAdapter(request.headers()), wsConn, connectRunnable);
         wsConn.handleWebsocketConnect(ws);
         if (ws.isRejected()) {
@@ -711,6 +745,11 @@ public class DefaultHttpServer implements HttpServer, Closeable {
             firstHandler = wsHandler;
           }
         } else {
+          ChannelHandler handler = ctx.pipeline().get(HttpChunkContentCompressor.class);
+          if (handler != null) {
+            // remove compressor as its not needed anymore once connection was upgraded to websockets
+            ctx.pipeline().remove(handler);
+          }
           ws.connectNow();
           return;
         }

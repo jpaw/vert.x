@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.sockjs.impl;
@@ -50,6 +50,7 @@ class WebSocketTransport extends BaseTransport {
       public void handle(final WebSocketMatcher.Match match) {
         if (log.isTraceEnabled()) log.trace("WS, handler");
         final Session session = new Session(vertx, sessions, config.getLong("heartbeat_period"), sockHandler);
+        session.setInfo(match.ws.localAddress(), match.ws.remoteAddress(), match.ws.uri(), match.ws.headers());
         session.register(new WebSocketListener(match.ws, session));
       }
     });
@@ -105,9 +106,9 @@ class WebSocketTransport extends BaseTransport {
       });
       ws.exceptionHandler(new Handler<Throwable>() {
         public void handle(Throwable t) {
-            closed = true;
-            session.shutdown();
-            session.handleException(t);
+          closed = true;
+          session.shutdown();
+          session.handleException(t);
           }
       });
     }

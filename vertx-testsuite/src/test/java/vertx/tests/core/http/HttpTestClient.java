@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package vertx.tests.core.http;
@@ -22,12 +22,15 @@ import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.http.*;
 import org.vertx.java.core.http.impl.HttpHeadersAdapter;
+import org.vertx.java.core.net.NetServer;
 import org.vertx.java.core.net.NetSocket;
+import org.vertx.java.core.streams.Pump;
 import org.vertx.java.testframework.TestClientBase;
 import org.vertx.java.testframework.TestUtils;
 
 import java.io.*;
 import java.net.URLEncoder;
+import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,14 +41,32 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class HttpTestClient extends TestClientBase {
 
+  public static final File VERTX_FILE_BASE;
+
+  static {
+    try {
+      final File vertxFileBase = Files.createTempDirectory("vertx-test").toFile();
+      vertxFileBase.deleteOnExit();
+      VERTX_FILE_BASE = vertxFileBase;
+    }
+    catch (IOException e) {
+      throw new ExceptionInInitializerError(e);
+    }
+  }
+
   private HttpClient client;
   private HttpServer server;
+
+  protected boolean compression() {
+    return false;
+  }
 
   @Override
   public void start() {
     super.start();
     tu.appReady();
     client = vertx.createHttpClient().setHost("localhost").setPort(8080);
+    client.setTryUseCompression(compression());
   }
 
   @Override
@@ -65,6 +86,7 @@ public class HttpTestClient extends TestClientBase {
 
   private void startServer(Handler<HttpServerRequest> serverHandler, AsyncResultHandler<HttpServer> handler) {
     server = vertx.createHttpServer();
+    server.setCompressionSupported(compression());
     server.requestHandler(serverHandler);
     server.listen(8080, "localhost", handler);
   }
@@ -670,8 +692,11 @@ public class HttpTestClient extends TestClientBase {
     startServer(new Handler<HttpServerRequest>() {
       public void handle(HttpServerRequest req) {
         tu.checkThread();
-        tu.azzert(req.headers().size() == 1);
-        tu.azzert(req.headers().get("host").equals("localhost:8080"));
+        if (compression()) {
+          tu.azzert(req.headers().size() == 2);
+        } else {
+          tu.azzert(req.headers().size() == 1);
+        }
         tu.azzert(req.headers().get("host").equals("localhost:8080"));
         req.response().end();
       }
@@ -713,7 +738,11 @@ public class HttpTestClient extends TestClientBase {
     startServer(new Handler<HttpServerRequest>() {
       public void handle(HttpServerRequest req) {
         tu.checkThread();
-        tu.azzert(req.headers().size() == 1 + headers.size());
+        if (compression()) {
+          tu.azzert(req.headers().size() == 2 + headers.size());
+        } else {
+          tu.azzert(req.headers().size() == 1 + headers.size());
+        }
         for (Map.Entry<String, String> entry : headers) {
           tu.azzert(entry.getValue().equals(req.headers().get(entry.getKey())));
         }
@@ -776,7 +805,7 @@ public class HttpTestClient extends TestClientBase {
   }
 
   public void testRequestTimeoutExtendedWhenResponseChunksReceived() {
-    final long timeout = 500;
+    final long timeout = 2000;
     AsyncResultHandler<HttpServer> handler = new AsyncResultHandler<HttpServer>() {
       @Override
       public void handle(AsyncResult<HttpServer> ar) {
@@ -802,7 +831,7 @@ public class HttpTestClient extends TestClientBase {
       }
     };
     startServer(new Handler<HttpServerRequest>() {
-      int numChunks = 10;
+      int numChunks = 100;
       int count = 0;
       long interval = timeout * 2 / numChunks;
 
@@ -875,8 +904,8 @@ public class HttpTestClient extends TestClientBase {
       @Override
       public void handle(Long event) {
         tu.azzert(exception.get() != null, "Expected an exception to be set");
-        tu.azzert(!(exception.get() instanceof TimeoutException), 
-        		"Expected to not end with timeout exception, but did: " + exception.get());
+        tu.azzert(!(exception.get() instanceof TimeoutException),
+          "Expected to not end with timeout exception, but did: " + exception.get());
         tu.checkThread();
         tu.testComplete();
       }
@@ -1634,7 +1663,7 @@ public class HttpTestClient extends TestClientBase {
           public void handle(AsyncResult<Void> res) {
           }
         };
-        
+
         Buffer buff = new Buffer();
         HttpServerResponse resp = req.response();
         resp.end();
@@ -2077,7 +2106,9 @@ public class HttpTestClient extends TestClientBase {
         client.getNow("some-uri", new Handler<HttpClientResponse>() {
           public void handle(final HttpClientResponse response) {
             tu.azzert(response.statusCode() == 200);
-            tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+            if (!compression()) {
+              tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+            }
             tu.azzert("text/html".equals(response.headers().get("content-type")));
             response.bodyHandler(new Handler<Buffer>() {
               public void handle(Buffer buff) {
@@ -2094,6 +2125,45 @@ public class HttpTestClient extends TestClientBase {
     startServer(new Handler<HttpServerRequest>() {
       public void handle(HttpServerRequest req) {
         req.response().sendFile(file.getAbsolutePath());
+      }
+    }, handler);
+  }
+
+  public void testSendFileWithHandler() throws Exception {
+    final String content = TestUtils.randomUnicodeString(10000);
+    final File file = setupFile("test-send-file.html", content);
+
+    AsyncResultHandler<HttpServer> handler = new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        tu.azzert(ar.succeeded());
+        client.getNow("some-uri", new Handler<HttpClientResponse>() {
+          public void handle(final HttpClientResponse response) {
+            tu.azzert(response.statusCode() == 200);
+            if (!compression()) {
+              tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+            }
+            tu.azzert("text/html".equals(response.headers().get("content-type")));
+            response.bodyHandler(new Handler<Buffer>() {
+              public void handle(Buffer buff) {
+                tu.azzert(content.equals(buff.toString()));
+                file.delete();
+              }
+            });
+          }
+        });
+      }
+    };
+
+    startServer(new Handler<HttpServerRequest>() {
+      public void handle(HttpServerRequest req) {
+        req.response().sendFile(file.getAbsolutePath(), new Handler<AsyncResult<Void>>() {
+          @Override
+          public void handle(AsyncResult<Void> res) {
+            tu.azzert(res.succeeded());
+            tu.testComplete();
+          }
+        });
       }
     }, handler);
   }
@@ -2125,6 +2195,8 @@ public class HttpTestClient extends TestClientBase {
     }, handler);
   }
 
+
+
   public void testSendFileNotFoundWith404Page() throws Exception {
     final String content = "<html><body>This is my 404 page</body></html>";
     final File file = setupFile("my-404-page.html", content);
@@ -2154,6 +2226,40 @@ public class HttpTestClient extends TestClientBase {
     }, handler);
   }
 
+  public void testSendFileNotFoundWith404PageAndHandler() throws Exception {
+    final String content = "<html><body>This is my 404 page</body></html>";
+    final File file = setupFile("my-404-page.html", content);
+    AsyncResultHandler<HttpServer> handler = new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        tu.azzert(ar.succeeded());
+        client.getNow("some-uri", new Handler<HttpClientResponse>() {
+          public void handle(final HttpClientResponse response) {
+            tu.azzert(response.statusCode() == 404);
+            tu.azzert("text/html".equals(response.headers().get("content-type")));
+            response.bodyHandler(new Handler<Buffer>() {
+              public void handle(Buffer buff) {
+                tu.azzert(content.equals(buff.toString()));
+              }
+            });
+          }
+        });
+      }
+    };
+
+    startServer(new Handler<HttpServerRequest>() {
+      public void handle(HttpServerRequest req) {
+        req.response().sendFile("doesnotexist.html", file.getAbsolutePath(), new Handler<AsyncResult<Void>>() {
+          @Override
+          public void handle(AsyncResult<Void> res) {
+            tu.azzert(res.succeeded());
+            tu.testComplete();
+          }
+        });
+      }
+    }, handler);
+  }
+
   public void testSendFileOverrideHeaders() throws Exception {
     final String content = TestUtils.randomUnicodeString(10000);
     final File file = setupFile("test-send-file.html", content);
@@ -2165,7 +2271,9 @@ public class HttpTestClient extends TestClientBase {
         client.getNow("some-uri", new Handler<HttpClientResponse>() {
           public void handle(final HttpClientResponse response) {
             tu.azzert(response.statusCode() == 200);
-            tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+            if (!compression()) {
+              tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+            }
             tu.azzert("wibble".equals(response.headers().get("content-type")));
             response.bodyHandler(new Handler<Buffer>() {
               public void handle(Buffer buff) {
@@ -2188,11 +2296,11 @@ public class HttpTestClient extends TestClientBase {
   }
 
   private File setupFile(String fileName, String content) throws Exception {
-    fileName = "./" + fileName;
-    File file = new File(fileName);
+    File file = new File(VERTX_FILE_BASE, fileName);
     if (file.exists()) {
       file.delete();
     }
+    file.deleteOnExit();
     BufferedWriter out = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file), "UTF-8"));
     out.write(content);
     out.close();
@@ -2562,8 +2670,9 @@ public class HttpTestClient extends TestClientBase {
   }
 
   public void testConnectInvalidHost() {
+    client.setConnectTimeout(1000);
     client.exceptionHandler(createNoConnectHandler());
-    client.setHost("230.1.1.1");
+    client.setHost("127.0.0.2");
     client.getNow("someurl", new Handler<HttpClientResponse>() {
       public void handle(HttpClientResponse resp) {
         tu.azzert(false, "Connect should not be called");
@@ -2716,16 +2825,22 @@ public class HttpTestClient extends TestClientBase {
           req.expectMultiPart(true);
           req.uploadHandler(new Handler<HttpServerFileUpload>() {
             @Override
-            public void handle(final HttpServerFileUpload event) {
-              event.dataHandler(new Handler<Buffer>() {
+            public void handle(final HttpServerFileUpload up) {
+              up.dataHandler(new Handler<Buffer>() {
                 @Override
                 public void handle(Buffer buffer) {
                   tu.azzert(content.equals(buffer.toString("UTF-8")));
                 }
               });
-              tu.azzert(event.name().equals("file"));
-              tu.azzert(event.filename().equals("tmp-0.txt"));
-              tu.azzert(event.contentType().equals("image/gif"));
+              tu.azzert(up.name().equals("file"));
+              tu.azzert(up.filename().equals("tmp-0.txt"));
+              tu.azzert(up.contentType().equals("image/gif"));
+              up.endHandler(new Handler<Void>() {
+                @Override
+                public void handle(Void v) {
+                  tu.azzert(up.size() == content.length());
+                }
+              });
             }
           });
           req.endHandler(new VoidHandler() {
@@ -2960,6 +3075,83 @@ public class HttpTestClient extends TestClientBase {
       }
     }, handler);
   }
+
+  public void testSetGetMaxWebSocketFrameSizeServer() {
+    HttpServer server = vertx.createHttpServer();
+    int size = 61231763;
+    tu.azzert(server == server.setMaxWebSocketFrameSize(size));
+    tu.azzert(size == server.getMaxWebSocketFrameSize());
+    tu.testComplete();
+  }
+
+  public void testSetGetMaxWebSocketFrameSizeClient() {
+    HttpClient client = vertx.createHttpClient();
+    int size = 61231763;
+    tu.azzert(client == client.setMaxWebSocketFrameSize(size));
+    tu.azzert(size == client.getMaxWebSocketFrameSize());
+    tu.testComplete();
+  }
+
+  public void testRequestsTimeoutInQueue() {
+    client.setKeepAlive(false);
+    client.setMaxPoolSize(1);
+    AsyncResultHandler<HttpServer> handler = new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        tu.azzert(ar.succeeded());
+
+        final long start = System.currentTimeMillis();
+
+        // Add a few requests that should all timeout
+        for (int i = 0; i < 5; i++) {
+          HttpClientRequest req = getRequest(true, "GET", "some-uri", new Handler<HttpClientResponse>() {
+            public void handle(HttpClientResponse resp) {
+              tu.checkThread();
+              tu.azzert(false, "Should not be called");
+            }
+          });
+          req.exceptionHandler(new Handler<Throwable>() {
+            @Override
+            public void handle(Throwable t) {
+              tu.azzert(t instanceof TimeoutException);
+            }
+          });
+          req.setTimeout(500);
+          req.end();
+        }
+        // Now another request that should not timeout
+        HttpClientRequest req = getRequest(true, "GET", "some-uri", new Handler<HttpClientResponse>() {
+          public void handle(HttpClientResponse resp) {
+            tu.checkThread();
+            tu.azzert(resp.statusCode() == 200);
+            tu.testComplete();
+          }
+        });
+        req.exceptionHandler(new Handler<Throwable>() {
+          @Override
+          public void handle(Throwable t) {
+            tu.azzert(false, "Should not throw exception");
+          }
+        });
+        req.setTimeout(3000);
+        req.end();
+      }
+    };
+    startServer(new Handler<HttpServerRequest>() {
+      public void handle(final HttpServerRequest req) {
+        tu.checkThread();
+        //Send response after 1 sec
+        vertx.setTimer(1000, new Handler<Long>() {
+          @Override
+          public void handle(Long event) {
+            req.response().end();
+          }
+        });
+      }
+    }, handler);
+
+  }
+
   // -------------------------------------------------------------------------------------------
 
   private String generateQueryString(Map<String, String> params, char delim) {
@@ -3024,6 +3216,142 @@ public class HttpTestClient extends TestClientBase {
     return map;
   }
 
+
+  public void testResponseBodyWriteFixedString() {
+    final String body = "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
+    final Buffer bodyBuff = new Buffer(body);
+
+    AsyncResultHandler<HttpServer> handler = new AsyncResultHandler<HttpServer>() {
+      @Override
+      public void handle(AsyncResult<HttpServer> ar) {
+        tu.azzert(ar.succeeded());
+        final HttpClientRequest req = getRequest(true, "GET", "some-uri", new Handler<HttpClientResponse>() {
+          public void handle(HttpClientResponse resp) {
+            tu.checkThread();
+
+            resp.bodyHandler(new Handler<Buffer>() {
+              public void handle(Buffer buff) {
+                tu.azzert(TestUtils.buffersEqual(bodyBuff, buff));
+                tu.testComplete();
+              }
+            });
+          }
+        });
+        if (compression()) {
+          req.putHeader("Accept-Encoding", "deflate");
+        }
+        req.exceptionHandler(new Handler<Throwable>() {
+          @Override
+          public void handle(Throwable event) {
+            event.printStackTrace();
+          }
+        });
+        req.end();
+      }
+    };
+
+    startServer(new Handler<HttpServerRequest>() {
+      public void handle(final HttpServerRequest req) {
+        tu.checkThread();
+        req.response().exceptionHandler(new Handler<Throwable>() {
+          @Override
+          public void handle(Throwable event) {
+            event.printStackTrace();
+          }
+        });
+        req.response().setChunked(true);
+        req.response().write(body);
+        req.response().end();
+
+      }
+
+    }, handler);
+
+  }
+
+  public void testHttpConnect() {
+    final Buffer buffer = TestUtils.generateRandomBuffer(128);
+    final Buffer received = new Buffer();
+    vertx.createNetServer().connectHandler(new Handler<NetSocket>() {
+      @Override
+      public void handle(final NetSocket socket) {
+        socket.dataHandler(new Handler<Buffer>() {
+          @Override
+          public void handle(Buffer event) {
+            socket.write(event);
+          }
+        });
+      }
+    }).listen(1235, new AsyncResultHandler<NetServer>() {
+      @Override
+      public void handle(AsyncResult<NetServer> event) {
+        tu.checkThread();
+        tu.azzert(event.succeeded());
+
+        final NetServer netServer = event.result();
+        AsyncResultHandler<HttpServer> handler = new AsyncResultHandler<HttpServer>() {
+          @Override
+          public void handle(AsyncResult<HttpServer> ar) {
+            tu.azzert(ar.succeeded());
+            final HttpClientRequest req = client.connect("some-uri:8080", new Handler<HttpClientResponse>() {
+              @Override
+              public void handle(HttpClientResponse event) {
+                tu.checkThread();
+                tu.azzert(200 == event.statusCode());
+                NetSocket socket = event.netSocket();
+                socket.dataHandler(new Handler<Buffer>() {
+                  @Override
+                  public void handle(Buffer event) {
+                    received.appendBuffer(event);
+                    if (received.length() == buffer.length()) {
+                      netServer.close();
+                      tu.azzert(TestUtils.buffersEqual(received, buffer));
+                      tu.testComplete();
+                    }
+                  }
+                });
+                socket.write(buffer);
+              }
+            });
+            req.end();
+          }
+        };
+
+        startServer(new Handler<HttpServerRequest>() {
+          public void handle(final HttpServerRequest req) {
+            tu.checkThread();
+            req.response().exceptionHandler(new Handler<Throwable>() {
+              @Override
+              public void handle(Throwable event) {
+                event.printStackTrace();
+              }
+            });
+            vertx.createNetClient().connect(netServer.port(), new AsyncResultHandler<NetSocket>() {
+              @Override
+              public void handle(AsyncResult<NetSocket> event) {
+                tu.azzert(event.succeeded());
+                final NetSocket socket = event.result();
+                req.response().setStatusCode(200);
+                req.response().setStatusMessage("Connection established");
+                req.response().end();
+
+                // Create pumps which echo stuff
+                Pump.createPump(req.netSocket(), socket).start();
+                Pump.createPump(socket, req.netSocket()).start();
+                req.netSocket().closeHandler(new Handler<Void>() {
+                  @Override
+                  public void handle(Void event) {
+                    socket.close();
+                  }
+                });
+              }
+            });
+          }
+
+        }, handler);
+      }
+    });
+  }
 }
 
 

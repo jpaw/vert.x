@@ -1,25 +1,22 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.core.http.impl;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.*;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.LastHttpContent;
@@ -39,8 +36,8 @@ import org.vertx.java.core.net.impl.DefaultNetSocket;
 import org.vertx.java.core.net.impl.VertxNetHandler;
 
 import java.io.File;
+import java.util.ArrayDeque;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 
@@ -59,7 +56,7 @@ class ServerConnection extends ConnectionBase {
   private boolean channelPaused;
   private boolean paused;
   private boolean sentCheck;
-  private final Queue<Object> pending = new LinkedList<>();
+  private final Queue<Object> pending = new ArrayDeque<>(8);
   private final String serverOrigin;
   private final DefaultHttpServer server;
   private ChannelFuture lastWriteFuture;
@@ -84,7 +81,7 @@ class ServerConnection extends ConnectionBase {
   }
 
   void handleMessage(Object msg) {
-    if (paused || (msg instanceof HttpRequest && pendingResponse != null) || !pending.isEmpty()) {
+    if (paused || (pendingResponse != null && msg instanceof HttpRequest) || !pending.isEmpty()) {
       //We queue requests if paused or a request is in progress to prevent responses being written in the wrong order
       pending.add(msg);
       if (pending.size() == CHANNEL_PAUSE_QUEUE_SIZE) {
@@ -122,12 +119,11 @@ class ServerConnection extends ConnectionBase {
 
   @Override
   public ChannelFuture write(Object obj) {
-    ChannelFuture future = lastWriteFuture = super.write(obj);
-    return future;
+    return lastWriteFuture = super.write(obj);
   }
 
   NetSocket createNetSocket() {
-    DefaultNetSocket socket = new DefaultNetSocket(vertx, channel, context);
+    DefaultNetSocket socket = new DefaultNetSocket(vertx, channel, context, server.tcpHelper, false);
     Map<Channel, DefaultNetSocket> connectionMap = new HashMap<Channel, DefaultNetSocket>(1);
     connectionMap.put(channel, socket);
 
@@ -135,10 +131,17 @@ class ServerConnection extends ConnectionBase {
     endReadAndFlush();
 
     // remove old http handlers and replace the old handler with one that handle plain sockets
-    channel.pipeline().remove("httpDecoder");
-    if (channel.pipeline().get("chunkedWriter") != null) {
-      channel.pipeline().remove("chunkedWriter");
+    ChannelPipeline pipeline = channel.pipeline();
+    ChannelHandler compressor = pipeline.get(HttpChunkContentCompressor.class);
+    if (compressor != null) {
+      pipeline.remove(compressor);
     }
+
+    pipeline.remove("httpDecoder");
+    if (pipeline.get("chunkedWriter") != null) {
+      pipeline.remove("chunkedWriter");
+    }
+
     channel.pipeline().replace("handler", "handler", new VertxNetHandler(server.vertx, connectionMap) {
       @Override
       public void exceptionCaught(ChannelHandlerContext chctx, Throwable t) throws Exception {
@@ -281,8 +284,9 @@ class ServerConnection extends ConnectionBase {
     super.addFuture(doneHandler, future);
   }
 
-  protected boolean isSSL() {
-    return super.isSSL();
+  @Override
+  protected boolean supportsFileRegion() {
+    return super.supportsFileRegion() && channel.pipeline().get(HttpChunkContentCompressor.class) == null;
   }
 
   protected ChannelFuture sendFile(File file) {
@@ -320,10 +324,9 @@ class ServerConnection extends ConnectionBase {
     checkNextTick();
   }
 
-  // TODO I think this can be simplified / optimised
   private void checkNextTick() {
     // Check if there are more pending messages in the queue that can be processed next time around
-    if (!sentCheck && !pending.isEmpty() && !paused && (pendingResponse == null || pending.peek() instanceof HttpContent)) {
+    if (!pending.isEmpty() && !sentCheck && !paused && (pendingResponse == null || pending.peek() instanceof HttpContent)) {
       sentCheck = true;
       vertx.runOnContext(new VoidHandler() {
         public void handle() {

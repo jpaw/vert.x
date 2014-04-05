@@ -1,17 +1,17 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright (c) 2011-2013 The original author or authors
+ * ------------------------------------------------------
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Apache License v2.0 which accompanies this distribution.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *     The Eclipse Public License is available at
+ *     http://www.eclipse.org/legal/epl-v10.html
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     The Apache License v2.0 is available at
+ *     http://www.opensource.org/licenses/apache2.0.php
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * You may elect to redistribute this code under either of these licenses.
  */
 
 package org.vertx.java.platform.impl.cli;
@@ -31,8 +31,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.*;
-import java.util.Enumeration;
-import java.util.Scanner;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.Attributes;
@@ -52,18 +52,30 @@ public class Starter {
     // Show download stats - they don't display properly in Gradle so we only have them when running
     // on the command line
     HttpResolution.suppressDownloadCounter = false;
-    System.setProperty("vertx.loadWithPlatformCL", "false");
     new Starter(args);
   }
+
+  public static void addAfterShutdownTask(Runnable task) {
+    afterShutdownTasks.add(task);
+  }
+
+  private static Queue<Runnable> afterShutdownTasks = new ConcurrentLinkedQueue<>();
 
   private final CountDownLatch stopLatch = new CountDownLatch(1);
 
   private Starter(String[] sargs) {
-    if (sargs.length < 1) {
-      displaySyntax();
+
+    Args args = new Args(sargs);
+    sargs = removeOptions(sargs);
+
+    if (sargs.length == 0) {
+      if (args.map.get("-ha") != null) {
+        runBareHA(args);
+      } else {
+        displaySyntax();
+      }
     } else {
       String command = sargs[0].toLowerCase();
-      Args args = new Args(sargs);
       if ("version".equals(command)) {
         log.info(getVersion());
       } else {
@@ -90,6 +102,12 @@ public class Starter {
             case "pulldeps":
               pullDependencies(operand);
               break;
+            case "fatjar":
+              fatJar(operand, args);
+              break;
+            case "create-module-link":
+              createModuleLink(operand);
+              break;
             default:
               displaySyntax();
           }
@@ -98,7 +116,17 @@ public class Starter {
     }
   }
 
-  private static <T> AsyncResultHandler<T> createLoggingHandler(final String successMessage, final Handler<AsyncResult<T>> doneHandler) {
+  private String[] removeOptions(String[] args) {
+    List<String> munged = new ArrayList<>();
+    for (String arg: args) {
+      if (!arg.startsWith("-")) {
+        munged.add(arg);
+      }
+    }
+    return munged.toArray(new String[munged.size()]);
+  }
+
+  private static <T> AsyncResultHandler<T> createLoggingHandler(final String message, final Handler<AsyncResult<T>> doneHandler) {
     return new AsyncResultHandler<T>() {
       @Override
       public void handle(AsyncResult<T> res) {
@@ -111,10 +139,10 @@ public class Starter {
               log.error(ve.getCause());
             }
           } else {
-            log.error(cause);
+            log.error("Failed in " + message, cause);
           }
         } else {
-          log.trace(successMessage);
+          log.info("Succeeded in " + message);
         }
         if (doneHandler != null) {
           doneHandler.handle(res);
@@ -133,30 +161,60 @@ public class Starter {
 
   private void pullDependencies(String modName) {
     log.info("Attempting to pull in dependencies for module " + modName);
-    createPM().pullInDependencies(modName, createLoggingHandler("Successfully pulled in dependencies", unblockHandler()));
+    createPM().pullInDependencies(modName, createLoggingHandler("pulling in dependencies", unblockHandler()));
+    block();
+  }
+
+  private void fatJar(String modName, Args args) {
+    log.info("Attempting to make a fat jar for module " + modName);
+    String directory = args.map.get("-d");
+    if (directory != null && !new File(directory).exists()) {
+      log.info("Directory does not exist: " + directory);
+      return;
+    }
+    createPM().makeFatJar(modName, directory, createLoggingHandler("making fat jar", unblockHandler()));
+    block();
+  }
+
+  private void createModuleLink(String modName) {
+    log.info("Attempting to create module link for module " + modName);
+    createPM().createModuleLink(modName, createLoggingHandler("creating module link", unblockHandler()));
     block();
   }
 
   private void installModule(String modName) {
     log.info("Attempting to install module " + modName);
-    createPM().installModule(modName, createLoggingHandler("Successfully installed module", unblockHandler()));
+    createPM().installModule(modName, createLoggingHandler("installing module", unblockHandler()));
     block();
   }
 
   private void uninstallModule(String modName) {
     log.info("Attempting to uninstall module " + modName);
-    createPM().uninstallModule(modName, createLoggingHandler("Successfully uninstalled module", unblockHandler()));
+    createPM().uninstallModule(modName, createLoggingHandler("uninstalling module", unblockHandler()));
     block();
   }
 
   private PlatformManager createPM() {
-    PlatformManager pm = PlatformLocator.factory.createPlatformManager();
-    registerExitHandler(pm);
-    return pm;
+    try {
+      PlatformManager pm = PlatformLocator.factory.createPlatformManager();
+      registerExitHandler(pm);
+      return pm;
+    } catch (Exception e) {
+      e.printStackTrace();
+      throw new IllegalStateException(e);
+    }
+
+
   }
 
   private PlatformManager createPM(int port, String host) {
     PlatformManager pm =  PlatformLocator.factory.createPlatformManager(port, host);
+    registerExitHandler(pm);
+    return pm;
+  }
+
+  private PlatformManager createPM(int port, String host, int quorumSize, String haGroup) {
+    PlatformManager pm =  PlatformLocator.factory.createPlatformManager(port, host, quorumSize, haGroup);
     registerExitHandler(pm);
     return pm;
   }
@@ -169,10 +227,9 @@ public class Starter {
     });
   }
 
-  private void runVerticle(boolean zip, boolean module, String main, Args args) {
-    boolean clustered = args.map.get("-cluster") != null;
+  private PlatformManager startPM(boolean ha, boolean clustered, Args args) {
     PlatformManager mgr;
-    if (clustered) {
+    if (clustered || ha) {
       log.info("Starting clustering...");
       int clusterPort = args.getInt("-cluster-port");
       if (clusterPort == -1) {
@@ -184,14 +241,40 @@ public class Starter {
         clusterHost = getDefaultAddress();
         if (clusterHost == null) {
           log.error("Unable to find a default network interface for clustering. Please specify one using -cluster-host");
-          return;
+          return null;
         } else {
           log.info("No cluster-host specified so using address " + clusterHost);
         }
       }
-      mgr = createPM(clusterPort, clusterHost);
+      if (ha) {
+        String sQuorumSize = args.map.get("-quorum");
+        String haGroup = args.map.get("-hagroup");
+        int quorumSize = sQuorumSize == null ? 0 : Integer.valueOf(sQuorumSize);
+        mgr = createPM(clusterPort, clusterHost, quorumSize, haGroup);
+      } else {
+        mgr = createPM(clusterPort, clusterHost);
+      }
     } else {
       mgr = createPM();
+    }
+    return mgr;
+  }
+
+  private void runBareHA(Args args) {
+    PlatformManager mgr = startPM(true, false, args);
+    if (mgr == null) {
+      return;
+    }
+    addShutdownHook(mgr);
+    block();
+  }
+
+  private void runVerticle(boolean zip, boolean module, String main, Args args) {
+    boolean ha = args.map.get("-ha") != null;
+    boolean clustered = args.map.get("-cluster") != null;
+    PlatformManager mgr = startPM(ha, clustered, args);
+    if (mgr == null) {
+      return;
     }
 
     String sinstances = args.map.get("-instances");
@@ -268,23 +351,24 @@ public class Starter {
       }
     };
     if (zip) {
-      mgr.deployModuleFromZip(main, conf, instances, createLoggingHandler("Successfully deployed module from zip", doneHandler));
+      mgr.deployModuleFromZip(main, conf, instances, createLoggingHandler("deploying module from zip", doneHandler));
     } else if (module) {
+      final String deployMsg = "deploying module";
       if (hasClasspath) {
-        mgr.deployModuleFromClasspath(main, conf, instances, classpath, createLoggingHandler("Successfully deployed module", doneHandler));
+        mgr.deployModuleFromClasspath(main, conf, instances, classpath, createLoggingHandler(deployMsg, doneHandler));
+      } else if (ha) {
+        mgr.deployModule(main, conf, instances, true, createLoggingHandler(deployMsg, doneHandler));
       } else {
-        mgr.deployModule(main, conf, instances, createLoggingHandler("Successfully deployed module", doneHandler));
+        mgr.deployModule(main, conf, instances, createLoggingHandler(deployMsg, doneHandler));
       }
     } else {
       boolean worker = args.map.get("-worker") != null;
-
-
       String includes = args.map.get("-includes");
       if (worker) {
         mgr.deployWorkerVerticle(false, main, conf, classpath, instances, includes,
-                                 createLoggingHandler("Successfully deployed worker verticle", doneHandler));
+                                 createLoggingHandler("deploying worker verticle", doneHandler));
       } else {
-        mgr.deployVerticle(main, conf, classpath, instances, includes, createLoggingHandler("Successfully deployed verticle", doneHandler));
+        mgr.deployVerticle(main, conf, classpath, instances, includes, createLoggingHandler("deploying verticle", doneHandler));
       }
     }
 
@@ -317,14 +401,22 @@ public class Starter {
             latch.countDown();
           }
         });
-        while (true) {
+        try {
+          if (!latch.await(30, TimeUnit.SECONDS)) {
+            log.error("Timed out waiting to undeploy");
+          }
+        } catch (InterruptedException e) {
+          throw new IllegalStateException(e);
+        }
+        // Now shutdown the platform manager
+        mgr.stop();
+        // Run any extra tasks
+        Runnable task;
+        while ((task = afterShutdownTasks.poll()) != null) {
           try {
-            if (!latch.await(30, TimeUnit.SECONDS)) {
-              log.error("Timed out waiting to undeploy");
-            }
-            break;
-          } catch (InterruptedException e) {
-            //OK - can get spurious wakeups
+            task.run();
+          } catch (Throwable t) {
+            log.error("Failed to run after shutdown task", t);
           }
         }
       }
@@ -431,7 +523,19 @@ public class Starter {
 "                               to choose one from the available interfaces.    \n" +
 "        -cp <path>             if specified Vert.x will attempt to find the    \n" +
 "                               module on the classpath represented by this     \n" +
-"                               path and not in the modules directory         \n\n" +
+"                               path and not in the modules directory           \n" +
+"        -ha                    if specified the module will be deployed as a   \n" +
+"                               high availability (HA) deployment.              \n" +
+"                               This means it can fail over to any other nodes \n" +
+"                               in the cluster started with the same HA group   \n" +
+"        -quorum                used in conjunction with -ha this specifies the \n" +
+"                               minimum number of nodes in the cluster for any  \n" +
+"                               HA deployments to be active. Defaults to 0      \n" +
+"        -hagroup               used in conjunction with -ha this specifies the \n" +
+"                               HA group this node will join. There can be      \n" +
+"                               multiple HA groups in a cluster. Nodes will only\n" +
+"                               failover to other nodes in the same group.      \n" +
+"                               Defaults to __DEFAULT__                       \n\n" +
 
 "    vertx runzip <zipfilename> [-options]                                      \n" +
 "        installs then deploys a module which is contained in the zip specified \n" +
@@ -460,6 +564,14 @@ public class Starter {
 "        needs to run.                                                          \n" +
 "        Vert.x will consult the 'includes' and 'deploys' fields to determine   \n" +
 "        which modules to pull in.                                            \n\n" +
+
+"    vertx create-module-link <modname>                                         \n" +
+"        Creates a link file in the modules directory for the specified module. \n" +
+"        When vertx tries to deploy a module and it finds a link file it follows\n" +
+"        the path in the link to find a file vertx_classpath.txt which contains \n" +
+"        the classpath (one entry on each line) to where the module resources   \n" +
+"        can be found. It then loads the module using that classpath. This is   \n" +
+"        when loading modules from resources in an IDE.                       \n\n" +
 
 "    vertx version                                                              \n" +
 "        displays the version";
