@@ -20,6 +20,7 @@ import org.vertx.java.core.*;
 import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.EventBus;
 import org.vertx.java.core.eventbus.Message;
+import org.vertx.java.core.eventbus.ReplyException;
 import org.vertx.java.core.impl.DefaultFutureResult;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
@@ -332,6 +333,12 @@ public class EventBusBridge implements Handler<SockJSSocket> {
     return value;
   }
 
+  private static void replyStatus(SockJSSocket sock, String replyAddress, String status) {
+    JsonObject body = new JsonObject().putString("status", status);
+    JsonObject envelope = new JsonObject().putString("address", replyAddress).putValue("body", body);
+    sock.write(new Buffer(envelope.encode()));
+  }
+
   private static void deliverMessage(SockJSSocket sock, String address, Message message) {
     JsonObject envelope = new JsonObject().putString("address", address).putValue("body", message.body());
     if (message.replyAddress() != null) {
@@ -367,17 +374,20 @@ public class EventBusBridge implements Handler<SockJSSocket> {
                   checkAndSend(send, address, body, sock, replyAddress);
                 } else {
                   // invalid session id
+                  replyStatus(sock, replyAddress, "access_denied");
                   if (debug) {
                     log.debug("Inbound message for address " + address + " rejected because sessionID is not authorised");
                   }
                 }
               } else {
+                replyStatus(sock, replyAddress, "auth_error");
                 log.error("Error in performing authorisation", res.cause());
               }
             }
           });
         } else {
-          // session id null
+          // session id null - authentication is required
+          replyStatus(sock, replyAddress, "auth_required");
           if (debug) {
             log.debug("Inbound message for address " + address + " rejected because it requires auth and sessionID is missing");
           }
@@ -387,6 +397,7 @@ public class EventBusBridge implements Handler<SockJSSocket> {
       }
     } else {
       // inbound match failed
+      replyStatus(sock, replyAddress, "access_denied");
       if (debug) {
         log.debug("Inbound message for address " + address + " rejected because there is no match");
       }
@@ -411,8 +422,15 @@ public class EventBusBridge implements Handler<SockJSSocket> {
             // was approved
             checkAddAccceptedReplyAddress(message.replyAddress());
             deliverMessage(sock, replyAddress, message);
-            info.handlerCount--;
+          } else {
+            ReplyException cause = (ReplyException) result.cause();
+            JsonObject envelope =
+                new JsonObject().putString("address", replyAddress).putNumber("failureCode",
+                    cause.failureCode()).putString("failureType", cause.failureType().name())
+                    .putString("message", cause.getMessage());
+            sock.write(new Buffer(envelope.encode()));
           }
+          info.handlerCount--;
         }
       };
     } else {
@@ -422,9 +440,11 @@ public class EventBusBridge implements Handler<SockJSSocket> {
       log.debug("Forwarding message to address " + address + " on event bus");
     }
     if (send) {
-      eb.sendWithTimeout(address, body, replyTimeout, replyHandler);
       if (replyAddress != null) {
+        eb.sendWithTimeout(address, body, replyTimeout, replyHandler);
         info.handlerCount++;
+      } else {
+        eb.send(address, body);
       }
     } else {
       eb.publish(address, body);

@@ -311,11 +311,15 @@ public class JavaHttpTest extends TestBase {
     startTest(getMethodName());
   }
 
-  public void testOtherStatus() {
+  public void testDefaultOther() {
     startTest(getMethodName());
   }
 
-  public void testStatusMessage() {
+  public void testOverrideStatusMessage() {
+    startTest(getMethodName());
+  }
+
+  public void testOverrideDefaultStatusMessage() {
     startTest(getMethodName());
   }
 
@@ -444,6 +448,31 @@ public class JavaHttpTest extends TestBase {
 
   public void testPoolingNoKeepAlive() throws Exception {
     startApp(CountServer.class.getName());
+    startTest(getMethodName());
+  }
+
+  public void testPoolingNoKeepAliveNoPipelining() throws Exception {
+    startApp(CountServer.class.getName());
+    startTest(getMethodName());
+  }
+
+  public void testPoolingNoPipeliningWithConnectionClosingServer() throws Exception {
+    startApp(ConnectionCloseCountServer.class.getName());
+    startTest(getMethodName());
+  }
+
+  public void testPoolingWithConnectionClosingServer() throws Exception {
+    startApp(ConnectionCloseCountServer.class.getName());
+    startTest(getMethodName());
+  }
+
+  public void testPoolingNoPipeliningWithClosingServer() throws Exception {
+    startApp(ClosingServer.class.getName());
+    startTest(getMethodName());
+  }
+
+  public void testPoolingWithClosingServer() throws Exception {
+    startApp(ClosingServer.class.getName());
     startTest(getMethodName());
   }
 
@@ -683,6 +712,16 @@ public class JavaHttpTest extends TestBase {
 
   @Test
   public void testSendFileDirectory() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testParamsDecode() throws Exception {
+    startTest(getMethodName());
+  }
+
+  @Test
+  public void testRequestHandlerNotCalledInvalidRequest() {
     startTest(getMethodName());
   }
 

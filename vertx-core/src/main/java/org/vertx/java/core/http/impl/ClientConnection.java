@@ -38,6 +38,7 @@ import org.vertx.java.core.net.impl.DefaultNetSocket;
 import org.vertx.java.core.net.impl.VertxNetHandler;
 
 import java.net.URI;
+import java.nio.channels.ClosedChannelException;
 import java.util.*;
 
 /**
@@ -51,18 +52,23 @@ class ClientConnection extends ConnectionBase {
   private final boolean ssl;
   private final String host;
   private final int port;
-  boolean keepAlive;
+  private boolean keepAlive;
+  private boolean pipelining;
+  private boolean forcedClose;
   private boolean upgradedConnection;
   private WebSocketClientHandshaker handshaker;
   private volatile DefaultHttpClientRequest currentRequest;
   // Requests can be pipelined so we need a queue to keep track of requests
   private final Queue<DefaultHttpClientRequest> requests = new ArrayDeque<>();
+  // the maximum number of pipelined requests. leave it "-1" to unlimit the number.
+  private int maxOutstandingRequest = -1;
   private volatile DefaultHttpClientResponse currentResponse;
   private DefaultWebSocket ws;
 
   ClientConnection(VertxInternal vertx, DefaultHttpClient client, Channel channel, boolean ssl, String host,
                    int port,
                    boolean keepAlive,
+                   boolean pipelining,
                    DefaultContext context) {
     super(vertx, channel, context);
     this.client = client;
@@ -75,6 +81,7 @@ class ClientConnection extends ConnectionBase {
       this.hostHeader = host + ':' + port;
     }
     this.keepAlive = keepAlive;
+    this.pipelining = pipelining;
   }
 
 
@@ -235,8 +242,25 @@ class ClientConnection extends ConnectionBase {
     }
   }
 
-  public void closeHandler(Handler<Void> handler) {
-    this.closeHandler = handler;
+  public void closeHandler(final Handler<Void> handler) {
+    this.closeHandler = new Handler<Void>() {
+        @Override
+        public void handle(Void event) {
+            if(getOutstandingRequestCount() > 0) {
+                // As soon as a response is handled for the request it's no longer in the requests queue so we should
+                // only be informing requests that haven't received a response.
+                for (DefaultHttpClientRequest request : requests) {
+                    // If the request has already received a timeout or other exception then don't inform it that the
+                    // connection was closed.
+                    if (!request.hasExceptionOccurred()) {
+                        request.handleException(new ClosedChannelException());
+                    }
+                }
+            }
+
+            handler.handle(event);
+        }
+    };
   }
 
   @Override
@@ -244,7 +268,7 @@ class ClientConnection extends ConnectionBase {
     if (upgradedConnection) {
       // Close it
       actualClose();
-    } else if (!keepAlive) {
+    } else if (!keepAlive || forcedClose) {
       // Close it
       actualClose();
     } else {
@@ -263,6 +287,14 @@ class ClientConnection extends ConnectionBase {
 
   int getOutstandingRequestCount() {
     return requests.size();
+  }
+
+  public void setMaxOutstandingRequestCount(final int maxOutstandingRequestCount) {
+    maxOutstandingRequest = maxOutstandingRequestCount;
+  }
+
+  public boolean isFullyOccupied() {
+    return maxOutstandingRequest != -1 && requests.size() >= maxOutstandingRequest;
   }
 
   //TODO - combine these with same in ServerConnection and NetSocket
@@ -313,10 +345,13 @@ class ClientConnection extends ConnectionBase {
     setContext();
     try {
       currentResponse.handleEnd(trailer);
+      forcedClose = isConnectionCloseHeader(currentResponse);
     } catch (Throwable t) {
       handleHandlerException(t);
     }
-    if (!keepAlive) {
+    if (!keepAlive || !pipelining || forcedClose) {
+      // If keepAlive is true and pipelining is true, then the connection was returned to the
+      // pool in endRequest
       close();
     }
   }
@@ -363,11 +398,14 @@ class ClientConnection extends ConnectionBase {
     }
     currentRequest = null;
 
-    if (keepAlive) {
+    // If keepAlive is true and pipelining is true, then return the connection to the
+    // pool so that other requests can use the same HTTP connection without waiting for
+    // the response of the current request (HTTP pipelining). Otherwise the connection
+    // is closed (if keepAlive is false) or returned to the pool (if keepAlive is true)
+    // after receiving the response
+    if (keepAlive && pipelining) {
       //Close just returns connection to the pool
       close();
-    } else {
-      //The connection gets closed after the response is received
     }
   }
 
@@ -414,5 +452,19 @@ class ClientConnection extends ConnectionBase {
       }
     });
     return socket;
+  }
+
+  private boolean isConnectionCloseHeader(DefaultHttpClientResponse response) {
+    if (response != null) {
+      List<String> connectionHeaderValues = response.headers().getAll(HttpHeaders.Names.CONNECTION);
+      if (connectionHeaderValues != null) {
+        for (String connectionHeaderValue : connectionHeaderValues) {
+          if (HttpHeaders.Values.CLOSE.equals(connectionHeaderValue)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 }

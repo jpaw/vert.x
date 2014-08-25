@@ -44,6 +44,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -131,17 +132,26 @@ public class DefaultPlatformManager implements PlatformManagerInternal, ModuleRe
   }
 
   private VertxInternal createVertxSynchronously(int port, String hostname) {
+    final AtomicReference<AsyncResult<Vertx>>  resultReference = new AtomicReference<>();
     final CountDownLatch latch = new CountDownLatch(1);
     DefaultVertx v = new DefaultVertx(port, hostname, new Handler<AsyncResult<Vertx>>() {
       @Override
       public void handle(AsyncResult<Vertx> result) {
+        resultReference.set(result);
         latch.countDown();
       }
     });
     try {
-      latch.await(10, TimeUnit.SECONDS);
-    } catch (Exception e) {
-      e.printStackTrace();
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Unable to start Vertx within 10 seconds");
+      }
+      AsyncResult<Vertx> result = resultReference.get();
+      if (result.failed()) {
+        throw new IllegalStateException("Unable to start Vertx", result.cause());
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(e);
     }
     return new WrappedVertx(v);
   }
@@ -1008,7 +1018,14 @@ public class DefaultPlatformManager implements PlatformManagerInternal, ModuleRe
     File modDir = new File(modRoot, modID.toString());
     if (modDir.exists()) {
       return modDir;
-    } else if (!systemModRoot.equals(modRoot)) {
+    }
+    // Try with the static modDir
+    modDir = new File(this.modRoot, modID.toString());
+    if (modDir.exists()) {
+      return modDir;
+    }
+    // Now try with system mod dir
+    if (!systemModRoot.equals(modRoot)) {
       modDir = new File(systemModRoot, modID.toString());
       if (modDir.exists()) {
         return modDir;
@@ -1668,7 +1685,7 @@ public class DefaultPlatformManager implements PlatformManagerInternal, ModuleRe
     }
 
     // Include the language impl module as a parent of the classloader
-    if (langImplInfo.moduleName != null) {
+    if (langImplInfo.moduleName != null && !langImplInfo.moduleName.isEmpty()) {
       loadIncludedModules(modRoot, modDir, mr, langImplInfo.moduleName);
     }
 

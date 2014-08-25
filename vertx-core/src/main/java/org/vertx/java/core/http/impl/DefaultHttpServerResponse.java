@@ -57,6 +57,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
   private MultiMap headers;
   private LastHttpContent trailing;
   private MultiMap trailers;
+  private String statusMessage;
 
   DefaultHttpServerResponse(final VertxInternal vertx, ServerConnection conn, HttpRequest request) {
   	this.vertx = vertx;
@@ -93,7 +94,8 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
 
   @Override
   public HttpServerResponse setStatusCode(int statusCode) {
-    this.response.setStatus(new HttpResponseStatus(statusCode, response.getStatus().reasonPhrase()));
+    HttpResponseStatus status = statusMessage != null ? new HttpResponseStatus(statusCode, statusMessage) : HttpResponseStatus.valueOf(statusCode);
+    this.response.setStatus(status);
     return this;
   }
 
@@ -104,6 +106,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
 
   @Override
   public HttpServerResponse setStatusMessage(String statusMessage) {
+    this.statusMessage = statusMessage;
     this.response.setStatus(new HttpResponseStatus(response.getStatus().code(), statusMessage));
     return this;
   }
@@ -275,7 +278,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
       prepareHeaders();
       FullHttpResponse resp;
       if (trailing != null) {
-        resp = new AssembledFullHttpResponse(response, data, trailing.trailingHeaders());
+        resp = new AssembledFullHttpResponse(response, data, trailing.trailingHeaders(), trailing.getDecoderResult());
       }  else {
         resp = new AssembledFullHttpResponse(response, data);
       }
@@ -291,7 +294,7 @@ public class DefaultHttpServerResponse implements HttpServerResponse {
       } else {
         LastHttpContent content;
         if (trailing != null) {
-          content = new AssembledLastHttpContent(data, trailing.trailingHeaders());
+          content = new AssembledLastHttpContent(data, trailing.trailingHeaders(), trailing.getDecoderResult());
         } else {
           content = new DefaultLastHttpContent(data, false);
         }

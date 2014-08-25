@@ -677,6 +677,10 @@ public class DefaultEventBus implements EventBus {
 
   private <T, U> void sendOrPubWithTimeout(BaseMessage<U> message,
                                            Handler<AsyncResult<Message<T>>> asyncResultHandler, long timeout) {
+    if (asyncResultHandler == null) {
+      throw new IllegalArgumentException(
+          "Cannot sendWithTimeout using a null reply handler on the event bus");
+    }
     Handler<Message<T>> handler = convertHandler(asyncResultHandler);
     sendOrPub(null, message, handler, asyncResultHandler, timeout);
   }
@@ -716,7 +720,7 @@ public class DefaultEventBus implements EventBus {
           timeoutID = vertx.setTimer(timeout, new Handler<Long>() {
             @Override
             public void handle(Long timerID) {
-              log.warn("Message reply handler timed out as no reply was received - it will be removed");
+              log.warn("Message reply handler for message.address='" + message.address + "' timed out as no reply was received - it will be removed");
               unregisterHandler(message.replyAddress, replyHandler);
               if (asyncResultHandler != null) {
                 asyncResultHandler.handle(new DefaultFutureResult<Message<T>>(new ReplyException(ReplyFailure.TIMEOUT, "Timed out waiting for reply")));
@@ -775,7 +779,11 @@ public class DefaultEventBus implements EventBus {
         } else {
           result = new DefaultFutureResult<>(reply);
         }
-        handler.handle(result);
+        if (handler != null) {
+          handler.handle(result);
+        } else {
+          log.error("Reply sent by sender was not expecting one");
+        }
       }
     };
   }
