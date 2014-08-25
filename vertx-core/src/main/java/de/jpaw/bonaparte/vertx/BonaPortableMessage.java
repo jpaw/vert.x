@@ -76,7 +76,7 @@ public class BonaPortableMessage extends BaseMessage<BonaPortable> {
             try {
                 if (doUsageStatistics)
                     cntDeserializations.incrementAndGet();
-                body = bap.readObject("vertxMessage", BonaPortable.class, false, true);
+                body = bap.readObject(StaticMeta.OUTER_BONAPORTABLE, BonaPortable.class);
             } catch (MessageParserException e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
