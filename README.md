@@ -1,3 +1,15 @@
+##What is this repository?
+
+This repository contains a fork of vert.x, which allows the use of user defined types on the message bus for vert.x 2.1.2.
+This works in a pure Java environment only, so currently looses the polyglot capabilities (unless the implementation is added
+to the other languages as well), but allows a much faster and type safe communication than the JSON objects.
+
+Exchangeable objects are defined using the bonaparte DSL. See jpaw/bonaparte-dsl and jpaw/bonaparte-java for an implementation.
+
+This fork will not be required any more once vert.x is out, because vert.x 3 will support user defined types as a core feature.
+
+
+
 ## What is vert.x?
 
 Vert.x is a polyglot, non-blocking, event-driven application platform that runs on the JVM.
