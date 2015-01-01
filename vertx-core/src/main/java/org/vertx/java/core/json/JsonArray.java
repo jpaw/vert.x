@@ -29,17 +29,17 @@ import java.util.*;
  */
 public class JsonArray extends JsonElement implements Iterable<Object> {
 
-  protected List<Object> list;
+  protected List list;
 
-  public JsonArray(List<Object> list) {
+  public JsonArray(List list) {
     this(list, true);
   }
 
   public JsonArray(Object[] array) {
-    this(new ArrayList<>(Arrays.asList(array)), true);
+    this(Arrays.asList(array), true);
   }
 
-  protected JsonArray(List<Object> list, boolean copy) {
+  protected JsonArray(List list, boolean copy) {
     this.list = copy ? convertList(list): list;
   }
 
@@ -190,7 +190,7 @@ public class JsonArray extends JsonElement implements Iterable<Object> {
         if (other != null) {
           return false;
         }
-      } else if (!entry.equals(other)) {
+      } else if (!equals(entry, other)) {
         return false;
       }
     }
