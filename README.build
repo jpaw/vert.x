@@ -1,0 +1,4 @@
+In case of build issues, do rm ~/.m2/repository/com/google/guava/guava/10.0.1/
+See https://groups.google.com/forum/#!topic/vertx/yv1oJ9u4_U8
+
+There seems to be some gradle issue.
