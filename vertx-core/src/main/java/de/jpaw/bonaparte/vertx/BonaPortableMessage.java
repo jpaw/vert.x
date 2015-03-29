@@ -108,11 +108,11 @@ public class BonaPortableMessage extends BaseMessage<BonaPortable> {
 
     @Override
     protected Message<BonaPortable> copy() {
-        if (body.is$Frozen())
+        if (body.was$Frozen())
             return this;
         // body is mutable, return a copy
         try {
-            return new BonaPortableMessage(send, address, body.get$MutableClone(true, true));
+            return new BonaPortableMessage(send, address, body.ret$MutableClone(true, true));
         } catch (ObjectValidationException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
